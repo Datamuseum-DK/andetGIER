@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body {
+	background-color: #444;
+	color: white;
+}
+#atlas {
+	border: 1px dotted white;
+}
+</style>
+<title>fallback typewriter font for GIER</title>
+<script>
+const glyph_width = 64;
+const glyph_height = 64;
+const glyph_columns = 16;
+const glyph_rows = 8;
+const glyphs = [
+	["1"],
+	["2"],
+	["3"],
+	["4"],
+	["5"],
+	["6"],
+	["7"],
+	["8"],
+	["9"],
+	["å"],
+	["_"],
+	["0"],
+	["<"],
+	["s"],
+	["t"],
+	["u"],
+	["v"],
+	["w"],
+	["x"],
+	["y"],
+	["z"],
+	[","],
+	["-"],
+	["j"],
+	["k"],
+	["l"],
+	["m"],
+	["n"],
+	["o"],
+	["p"],
+	["q"],
+	["r"],
+	["ø"],
+	["æ"],
+	["a"],
+	["b"],
+	["c"],
+	["d"],
+	["e"],
+	["f"],
+	["g"],
+	["h"],
+	["i"],
+	["."],
+	["\u2228", 0.9], // OR
+	["×"],
+	["/"],
+	["="],
+	[";"],
+	["["],
+	["]"],
+	["("],
+	[")"],
+	["Å"],
+	["|"],
+	["\u22c0", 0.65], // AND
+	[">"],
+	["S"],
+	["T"],
+	["U"],
+	["V"],
+	["W"],
+	["X"],
+	["Y"],
+	["Z"],
+	["10", 0.65],
+	["+"],
+	["J"],
+	["K"],
+	["L"],
+	["M"],
+	["N"],
+	["O"],
+	["P"],
+	["Q"],
+	["R"],
+	["Ø"],
+	["Æ"],
+	["A"],
+	["B"],
+	["C"],
+	["D"],
+	["E"],
+	["F"],
+	["G"],
+	["H"],
+	["I"],
+	[":"],
+];
+if (glyphs.length !== 88) throw new Error("bad setup");
+window.onload = () => {
+	const width = glyph_columns * glyph_width
+	const height = glyph_rows * glyph_height;
+	atlas.width = width;
+	atlas.height = height;
+	const ctx = atlas.getContext('2d');
+	let col=0,row=0;
+	ctx.fillStyle = "black";
+	ctx.fillRect(0, 0, width, height);
+	ctx.fillStyle = "white";
+	for (let g of glyphs) {
+		const size = 0|Math.round(50*(g[1] || 1));
+		ctx.font = (size|0)+"px courier";
+		let x = col * glyph_width + glyph_width*0.3;
+		let y = row * glyph_height + glyph_height/1.5;
+		ctx.fillText(g[0], x, y);
+		++col;
+		if (col >= glyph_columns) {
+			col=0;
+			++row;
+		}
+	}
+};
+</script>
+</head>
+<body>
+	<canvas id="atlas"></canvas><br/>
+	(firefox: right-click, open image in new tab)
+</body>
+</html>
