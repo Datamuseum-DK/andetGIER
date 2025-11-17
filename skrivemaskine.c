@@ -4,23 +4,22 @@ enum {
 	_N           = -1, // nil-index
 
 	// CCs
-	SET_LOWER    = 1, // switch to lower-case
-	SET_UPPER    = 2, // switch to upper-case
-	BLACK_RIBBON = 3, // switch to black ribbon
-	RED_RIBBON   = 4, // switch to red ribbon
-	PUNCH_OFF    = 5,
-	PUNCH_ON     = 6,
-	TAB          = 7,
-	CAR_RETURN   = 8, // CR (carriage return)
-	STOP_CODE    = 9,
-	TAPE_FEED    = 10,
+	SET_LOWER    = 58, // switch to lower-case
+	SET_UPPER    = 60, // switch to upper-case
+	BLACK_RIBBON = 62, // switch to black ribbon
+	RED_RIBBON   = 29, // switch to red ribbon
+	PUNCH_OFF    = 31,
+	PUNCH_ON     = 44,
+	TAB          = 30,
+	CAR_RETURN   = 64, // CR (carriage return)
+	STOP_CODE    = 11,
+	TAPE_FEED    = 63,
 	NOT_USED     = 0xff,
 
 	// flags
 	LOWER        = (1<<8),  // lower-case printable char
 	UPPER        = (1<<9),  // upper-case printable char
 	STAY         = (1<<10), // don't advance position after print
-
 };
 
 // CODE: GIER character code
@@ -183,6 +182,7 @@ static void setup_codes(void)
 		const int e = ENUM; \
 		if (e < (1<<8)) { \
 			assert((gidx == _N) && "control-code cannot have glyph index"); \
+			assert(((e == NOT_USED) || (e == code)) && "enum-code mismatch"); \
 		} else { \
 			assert(((code_enum[code] & 0xff) == 0) && "more than 1 CC for code?"); \
 		} \
@@ -317,8 +317,7 @@ static void printer_push_code(struct printer* pr, int code)
 static void printer_push_utf8(struct printer* pr, const char* utf8)
 {
 	const int restore_is_upper = pr->is_upper;
-	//printer_push_code(pr, SET_LOWER); // reset case
-	printer_push_code(pr, 58); // reset case
+	printer_push_code(pr, SET_LOWER); // reset case
 	int is_upper = 0;
 
 	const char* p = utf8;
@@ -349,10 +348,10 @@ static void printer_push_utf8(struct printer* pr, const char* utf8)
 				const int code = CODE; \
 				if (s != NULL) { \
 					if ((e & UPPER) && !(e & LOWER) && !is_upper) { \
-						printer_push_code(pr, /*SET_UPPER*/60); \
+						printer_push_code(pr, SET_UPPER); \
 						is_upper = 1; \
 					} else if ((e & LOWER) && !(e & UPPER) && is_upper) { \
-						printer_push_code(pr, /*SET_LOWER*/58); \
+						printer_push_code(pr, SET_LOWER); \
 						is_upper = 0; \
 					} \
 					printer_push_code(pr, code); \
@@ -366,10 +365,9 @@ static void printer_push_utf8(struct printer* pr, const char* utf8)
 		int c = *(p++);
 		switch (c) {
 		case '\n':
-			printer_push_code(pr, 64);
+			printer_push_code(pr, CAR_RETURN);
 			break;
 		case '\t':
-			printer_push_code(pr, 0);
 			printer_push_code(pr, 0);
 			printer_push_code(pr, 0);
 			break;
@@ -643,7 +641,7 @@ int main(int argc, char** argv)
 	struct printer printer;
 	printer_init(&printer);
 
-	printer_push_utf8(&printer, "|<Hva så drengene,\nGIER i en '-er til en _b_a_j_e_r|>");
+	printer_push_utf8(&printer, "|< Hva så drengene,\nGIER i en '-er\ntil en _b_a_j_e_r |>");
 
 	int exiting = 0;
 	int64_t prev_time_ms = SDL_GetTicks();
