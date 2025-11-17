@@ -16,7 +16,7 @@ const glyph_width = 64;
 const glyph_height = 64;
 const glyph_columns = 16;
 const glyph_rows = 8;
-const glyphs = [
+const lower_glyphs = [
 	["1"],
 	["2"],
 	["3"],
@@ -61,6 +61,8 @@ const glyphs = [
 	["h"],
 	["i"],
 	["."],
+];
+const upper_glyphs = [
 	["\u2228", 0.9], // OR
 	["×"],
 	["/"],
@@ -106,7 +108,8 @@ const glyphs = [
 	["I"],
 	[":"],
 ];
-if (glyphs.length !== 88) throw new Error("bad setup");
+if (lower_glyphs.length !== 44) throw new Error("bad setup");
+if (upper_glyphs.length !== 44) throw new Error("bad setup");
 window.onload = () => {
 	const width = glyph_columns * glyph_width
 	const height = glyph_rows * glyph_height;
@@ -117,16 +120,20 @@ window.onload = () => {
 	ctx.fillStyle = "black";
 	ctx.fillRect(0, 0, width, height);
 	ctx.fillStyle = "white";
-	for (let g of glyphs) {
-		const size = 0|Math.round(50*(g[1] || 1));
-		ctx.font = (size|0)+"px courier";
-		let x = col * glyph_width + glyph_width*0.3;
-		let y = row * glyph_height + glyph_height/1.5;
-		ctx.fillText(g[0], x, y);
-		++col;
-		if (col >= glyph_columns) {
-			col=0;
-			++row;
+	for (let i=0; i<44; ++i) {
+		for (let ii=0; ii<2; ++ii) {
+			const glyphs = [lower_glyphs, upper_glyphs][ii];
+			const g = glyphs[i];
+			const size = 0|Math.round(50*(g[1] || 1));
+			ctx.font = (size|0)+"px courier";
+			let x = col * glyph_width + glyph_width*0.3;
+			let y = row * glyph_height + glyph_height/1.5;
+			ctx.fillText(g[0], x, y);
+			++col;
+			if (col >= glyph_columns) {
+				col=0;
+				++row;
+			}
 		}
 	}
 };
