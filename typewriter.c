@@ -1,5 +1,11 @@
 
 enum {
+	CLEAR_READY = 0xa0,
+	LAMP_OFF    = 0xb0,
+	LAMP_ON     = 0xb1,
+};
+
+enum {
 	// misc
 	_N           = -1, // nil-index
 
@@ -22,12 +28,13 @@ enum {
 	STAY         = (1<<10), // carriage doesn't advance
 };
 
-// CODE: GIER character code
-// GIDX: glyph index in font atlas
-// ENUM: flags or CC
-// UTF8: UTF-8 character string
-// ALT:  GIER emulator alternative UTF-8 character string
-// SCAN: SDL3 scancode for historical layout (shift/unshift info in ENUM)
+// X-macro definition that links:
+//  CODE: GIER character code
+//  GIDX: glyph index in font atlas
+//  ENUM: character flags, or CC value (that equals CODE)
+//  UTF8: UTF-8 character string
+//  ALT:  GIER emulator alternative UTF-8 character string
+//  SCAN: SDL3 scancode for historical layout (shift/unshift info in ENUM)
 #define LIST_OF_CODES \
 /*CODE  GIDX  ENUM           UTF8    ALT    SCAN                    */ \
 X( 0  ,  _N , LOWER | UPPER , " "  , NULL , SDL_SCANCODE_SPACE       ) \
@@ -143,9 +150,19 @@ X( 64 ,  _N , CAR_RETURN    , NULL , NULL , _N                       ) \
 
 #include <ctype.h>
 #include <stdio.h>
+#include <string.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
+
+#ifdef HAVE_POSIX
+#include <sys/socket.h>
+#include <poll.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#endif
 
 #include <GL/gl.h>
 #include <SDL3/SDL.h>
@@ -164,9 +181,10 @@ static inline int is_valid_code(int code)
 	return (0 <= code) && (code <= 64);
 }
 
-static int code_enum[65];
-static int code_lower_gidx[65];
-static int code_upper_gidx[65];
+// maps code to..
+static int code_enum[65]; // .. ENUM value (OR'd together if flags)
+static int code_lower_gidx[65]; // .. GIDX value, when (ENUM & LOWER)
+static int code_upper_gidx[65]; // .. GIDX value, when (ENUM & UPPER)
 
 static void setup_codes(void)
 {
@@ -213,8 +231,6 @@ struct print_glyph {
 	int ribbon;
 	int gidx;
 };
-
-#define CODE_RINGBUF_SIZE_LOG2 (20)
 
 struct printer_state {
 	int column;
@@ -297,15 +313,15 @@ static void printer_reset(struct printer* pr)
 	arrsetlen(pr->glyph_arr, 0);
 }
 
+#define PRINTER_CODE_RINGBUF_SIZE_LOG2 (24)
+
 static void printer_init(struct printer* pr)
 {
 	memset(pr, 0, sizeof *pr);
-	pr->ringbuf = calloc(1<<CODE_RINGBUF_SIZE_LOG2, sizeof *pr->ringbuf);
+	pr->ringbuf = calloc(1<<PRINTER_CODE_RINGBUF_SIZE_LOG2, sizeof *pr->ringbuf);
 	assert(pr->ringbuf);
 	printer_reset(pr);
 }
-
-
 
 static void printer_process_code(struct printer* pr, int code)
 {
@@ -336,7 +352,7 @@ static void printer_push_code(struct printer* pr, int code)
 		printer_process_code(pr, code);
 	} else {
 		assert(pr->busy_ms > 0);
-		pr->ringbuf[(pr->ringbuf_write_cursor++) & ((1<<CODE_RINGBUF_SIZE_LOG2)-1)] = code;
+		pr->ringbuf[(pr->ringbuf_write_cursor++) & ((1<<PRINTER_CODE_RINGBUF_SIZE_LOG2)-1)] = code;
 		printer_state_update_for_code(&pr->state_ahead, code);
 	}
 }
@@ -415,7 +431,7 @@ static void printer_tick(struct printer* pr, int ms)
 		pr->busy_ms = 0;
 		while (pr->busy_ms == 0) {
 			if (pr->ringbuf_read_cursor < pr->ringbuf_write_cursor) {
-				printer_process_code(pr, pr->ringbuf[(pr->ringbuf_read_cursor++) & ((1<<CODE_RINGBUF_SIZE_LOG2)-1)]);
+				printer_process_code(pr, pr->ringbuf[(pr->ringbuf_read_cursor++) & ((1<<PRINTER_CODE_RINGBUF_SIZE_LOG2)-1)]);
 			} else {
 				assert(pr->ringbuf_read_cursor == pr->ringbuf_write_cursor);
 				return;
@@ -621,9 +637,92 @@ static void toggle_keyboard_mode(void)
 	}
 }
 
+static const char* argv0;
+__attribute__((noreturn)) static void print_usage_and_exit(void)
+{
+	fprintf(stderr, "Usage: %s <host> [port]\n", argv0);
+	fprintf(stderr, "Connects as virtual GIER typewriter to a host that \"speaks GIER code\".\n");
+	fprintf(stderr, "Use \"-\" as host to start as standalone typewriter.\n");
+	fprintf(stderr, "Default port is 1961.\n");
+	// TODO config files?
+	exit(EXIT_FAILURE);
+}
+
 int main(int argc, char** argv)
 {
 	setup_codes();
+
+	argv0 = argv[0];
+	if ((argc != 2) && (argc != 3)) print_usage_and_exit();
+
+	#ifdef HAVE_POSIX
+	int giersock = -1;
+	#endif
+
+	assert(argc >= 2);
+	if (0==strcmp("-", argv[1])) {
+		if (argc == 3) print_usage_and_exit();
+		assert(argc == 2);
+		// typewriter-only mode
+	} else {
+		#ifndef HAVE_POSIX
+		assert(!"TODO socket support outside of POSIX");
+		#endif
+
+		int port = 1961;
+		if (argc == 3) {
+			port = (int)strtol(argv[2], NULL, 10);
+			if (port == 0) {
+				fprintf(stderr, "bad port \"%s\"\n", argv[2]);
+				exit(EXIT_FAILURE);
+			}
+		}
+
+		#ifdef HAVE_POSIX
+
+		struct hostent* ent = gethostbyname(argv[1]);
+		if (ent == NULL) {
+			const char* err = "unknown error?!";
+			switch (h_errno) {
+			case HOST_NOT_FOUND: err = "HOST_NOT_FOUND"; break;
+			case TRY_AGAIN:      err = "TRY_AGAIN"; break;
+			case NO_RECOVERY:    err = "NO_RECOVERY"; break;
+			case NO_DATA:        err = "NO_DATA"; break;
+			}
+			fprintf(stderr, "%s: %s\n", argv[1], err);
+			exit(EXIT_FAILURE);
+		}
+		assert(ent != NULL);
+
+		giersock = socket(AF_INET, SOCK_STREAM, 0);
+		if (giersock == -1) {
+			fprintf(stderr, "socket(AF_INET, SOCK_STREAM, 0): %s\n", strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+
+		struct sockaddr_in addr = {0};
+		addr.sin_family = AF_INET;
+		addr.sin_addr.s_addr = *((unsigned long *)ent->h_addr);
+		addr.sin_port = htons(port);
+
+		#if 0
+		int e;
+		e = bind(giersock, (struct sockaddr*)&addr, sizeof(addr));
+		if (e == -1) {
+			fprintf(stderr, "%s: %s\n", argv[1], strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+		#endif
+
+		int e;
+		e = connect(giersock, (struct sockaddr*)&addr, sizeof(addr));
+		if (e == -1) {
+			fprintf(stderr, "%s: %s\n", argv[1], strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+
+		#endif
+	}
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		fprintf(stderr, "SDL_Init() failed\n");
@@ -712,13 +811,63 @@ int main(int argc, char** argv)
 	//set_keyboard_mode(TEXT_INPUT);
 	set_keyboard_mode(SCANCODE);
 
-	const int menu_cursor_period_ms = 600;
+	const int menu_cursor_period_ms = 400;
 	int menu_cursor_time_ms = 0;
 
 	int exiting = 0;
 	int in_menu = 0;
+	int lamp_is_on = 1;
 	int64_t prev_time_ms = SDL_GetTicks();
 	while (!exiting) {
+
+		#ifdef HAVE_POSIX
+		if (giersock != -1) {
+			short gev = POLLIN; // XXX | POLLOUT;
+			// TODO 
+			struct pollfd fds[] = { { .fd = giersock, .events = gev, } };
+			int e = poll(fds, ARRAY_LENGTH(fds), /*timeout=*/0);
+			if (e == -1) {
+				fprintf(stderr, "%s: %s\n", argv[1], strerror(errno));
+				exit(EXIT_FAILURE);
+			}
+			if (e >= 1) {
+				assert(fds[0].fd == giersock);
+				const short r = fds[0].revents;
+				if (r & POLLIN) {
+					uint8_t buf[1<<10];
+					const ssize_t nb = recv(giersock, buf, sizeof buf, MSG_DONTWAIT);
+					if (nb == -1) {
+						if ((errno != EINTR) && (errno != EAGAIN)) {
+							fprintf(stderr, "%s: %s\n", argv[1], strerror(errno));
+							exit(EXIT_FAILURE);
+						}
+					} else {
+						for (ssize_t i=0; i<nb; ++i) {
+							const uint8_t b = buf[i];
+							if (b < 0x80) {
+								printer_push_code(&paper_printer, b);
+							} else {
+								switch (b) {
+								case LAMP_ON:
+								case LAMP_OFF:
+									lamp_is_on = (b==LAMP_ON);
+									break;
+								default:
+									fprintf(stderr, "warning: unhandled code %d\n", b);
+									break;
+								}
+							}
+						}
+						//printf("TODO handle %zd bytes\n", nb);
+					}
+				}
+				if (r & POLLOUT) {
+					assert(!"TODO write");
+				}
+			}
+		}
+		#endif
+
 		const int64_t time_ms = SDL_GetTicks();
 		const int delta_ms = (int)(time_ms - prev_time_ms);
 		printer_tick(&paper_printer, delta_ms);
@@ -743,7 +892,7 @@ int main(int argc, char** argv)
 			const int scancode = event.key.scancode;
 			const int is_shifted = !!(event.key.mod & SDL_KMOD_SHIFT);
 
-			if (!in_menu) {
+			if (!in_menu && lamp_is_on) {
 				if (event.type == SDL_EVENT_TEXT_INPUT) {
 					if (keyboard_mode == TEXT_INPUT) {
 						//printf("TODO handle text [%s]\n", event.text.text);
@@ -805,7 +954,7 @@ int main(int argc, char** argv)
 			#define MENU_CURSOR_CHARS (5)
 			char cursor[MENU_CURSOR_CHARS + 1];
 			for (int i=0; i<MENU_CURSOR_CHARS; ++i) {
-				const int a = (menu_cursor_period_ms / MENU_CURSOR_CHARS) / 2;
+				const int a = (menu_cursor_period_ms / MENU_CURSOR_CHARS) / 6;
 				const int ct = (menu_cursor_time_ms + menu_cursor_period_ms - i*a) % menu_cursor_period_ms;
 				const int th = (menu_cursor_period_ms * 7) / 10;
 				cursor[i] = ct < th ? '>' : ' ';
@@ -900,11 +1049,18 @@ int main(int argc, char** argv)
 
 /*
 TODO
+ - socket forbindelse (*link*.py)
+   - typewriter mode hvis ikke valgt?
+ - rigtig skrifttype
+ - lyd
  - menu:
    - lyd: [til] fra
-   - lyd volume: [=====|====]
+   - volumen: [=====|====]
    - bevægelse: [vogn] typearme
-   - tastatur-layout:  [historisk] operativsystem
+   - tastatur-layout:  [historisk] operativsystemets
+     eller tekst-metode:
+   - nyt papir...
+   - gem indstillinger...
    - afslut...
    - afspil data...
      - *.flx?
@@ -916,7 +1072,6 @@ TODO
    - _ (underscore) kan bruges til valgt menupunkt
    - [====|====] eller [----|----] til sliders
    - [selected]  notselected   til enum-options
- - socket connection to *link*.py
  - klar skrivemaskine lampe... hvordan skal den vises?
  - scroll-back på piltaster
 XXX
