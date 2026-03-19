@@ -901,10 +901,8 @@ struct texture {
 static void texture_load(struct texture* tex, const char* path)
 {
 	memset(tex, 0, sizeof *tex);
-	int n=-1;
-	uint8_t* data = stbi_load(path, &tex->width, &tex->height, &n, 1);
+	uint8_t* data = stbi_load(path, &tex->width, &tex->height, NULL, 1);
 	assert((data != NULL) && "could not open texture");
-	assert(n==1);
 
 	GLCALL(glGenTextures(1, &tex->gl_texture));
 	GLCALL(glBindTexture(GL_TEXTURE_2D, tex->gl_texture));
@@ -1327,6 +1325,8 @@ int main(int argc, char** argv)
 		GLCALL(glBindTexture(GL_TEXTURE_2D, font_atlas.gl_texture));
 		GLCALL(glUniform1i(glyph_u_texture, 0));
 
+		const float gm=96;
+
 		for (int ribbon_pass=0; ribbon_pass<2; ++ribbon_pass) {
 
 			int num_vertices = 0;
@@ -1347,10 +1347,17 @@ int main(int argc, char** argv)
 
 				const int gcol = gidx & 15;
 				const int grow = gidx >> 4;
+				#if 0
 				uint16_t x0 = g->column * 32;
 				uint16_t y0 = g->row * 64;
 				uint16_t x1 = x0 + 64;
 				uint16_t y1 = y0 + 64;
+				#else
+				uint16_t x0 = g->column * 32;
+				uint16_t y0 = g->row * gm;
+				uint16_t x1 = x0 + gm;
+				uint16_t y1 = y0 + gm;
+				#endif
 				uint16_t u0 = (65536/16) * gcol;
 				uint16_t v0 = (65536/8) * grow;
 				uint16_t u1 = u0 + (65536/16)-1;
@@ -1380,7 +1387,7 @@ int main(int argc, char** argv)
 
 			const float left   = 0;
 			const float right  = left + width*2;
-			const float top    = -height*2 + (pr->state.row+1)*64;
+			const float top    = -height*2 + (pr->state.row+1)*gm;
 			const float bottom = top + height*2;
 
 			const GLfloat ortho[] = {

@@ -1,0 +1,59 @@
+
+This directory contains the tools I used for extracting the typewriter font
+from the original GIER typewriter.
+
+It's not fully automatic; manual work is required.
+
+Some of the automation is based on correlation, but it only scores matching
+pixels and doesn't penalize mismatches, so a filled black rectangle larger than
+the glyph will always be a "perfect match". I did it like this because glyphs
+in the documents are close together and I wanted to match glyphs regardless of
+"neighbouring garbage". If I had to do this again I'd probably figure out a
+better approach to correlation because most of the manual labour was done here.
+Also, glyphs that are both relatively rare and also "subsets" of other glyphs
+were especially troublesome with this approach, e.g. "c" really wanted to match
+o's instead of c's
+
+
+
+Initial procedure:
+
+ - Use pdfimages to extract .pbm files from a .pdf, and use
+   Image-/GraphicsMagick to convert them to .png
+
+ - Use 01-deskew.py to automatically deskew/unrotate images using Hough
+   transform. It depends on OpenCV (as Python import) and GraphicsMagick (as gm
+   binary). The latter could easily be changed to ImageMagick.
+
+
+
+Per-glyph procedure:
+
+ - Use 02-pick.c to find and pick the next glyph you want to extract. You
+   should use the same input bbox metrics for all glyphs. It depends on SDL3.
+   Use right mouse button to pan, wheel to zoom, and left mouse button to
+   extract the image inside the bbox.
+
+ - Retouch _pick.png if there's "garbage" in the image, e.g. dirt or
+   neighbouring glyphs. Note, this image is only used for correlation, not
+   reconstruction.
+
+ - Use 03-correlate.c to find best matches in another image. It'll write
+   _correlate.*.png files (this may be slow)
+
+ - Delete _correlate.*.png files that are false positives
+
+ - Use 04-combine.c to combine remaining _correlate.*.png files into a single
+   glyph image. Since output is 1-bit color, you can use a quality
+   upscaler (=better than linear interpolation) on the input images before
+   combining, and then downscale the combined image to get anti-aliasing
+
+
+These programs are less generic, but show how I did the rest:
+
+  03a-bulk-correlate.sh - runs 03-correlate on many inputs
+  04a-combine.sh        - upscales before running 04-combine
+  05a-make-atlas.c      - makes atlas texture from results
+
+I used Krita for cleaning up 02-pick outputs, and the final atlas.
+
