@@ -63,3 +63,14 @@ These programs are less generic, but show how I did the rest:
 
 I used Krita for cleaning up 02-pick outputs, and the final atlas.
 
+Also, some "post-mortem notes":
+ - The "Z" is guesswork based on "z" and "E"; I found no samples
+ - The OR-symbol ("v"-ish) is guesswork based on the AND-symbol ("^"-ish); I
+   found no samples
+ - The "right end of the curvy stroke" on "Q" is guesswork because I could only
+   find a few samples, and the "curvy stroke" (that distinguishes "Q" from "O")
+   always overlapped with the next glyph.
+ - I used https://datamuseum.dk/bits/30007378 for most glyph samples, but a few
+   came from https://datamuseum.dk/bits/30002482 which may or may not be the
+   exact same font. The following glyphs came exclusively from the second
+   document (30002482): JXåÅØ
