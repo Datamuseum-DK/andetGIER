@@ -1,5 +1,5 @@
 
-This directory contains the tools I used for extracting the typewriter font
+This directory contains the hacks I used for extracting the typewriter font
 from the original GIER typewriter.
 
 It's not fully automatic; manual work is required.
@@ -9,11 +9,17 @@ pixels and doesn't penalize mismatches, so a filled black rectangle larger than
 the glyph will always be a "perfect match". I did it like this because glyphs
 in the documents are close together and I wanted to match glyphs regardless of
 "neighbouring garbage". If I had to do this again I'd probably figure out a
-better approach to correlation because most of the manual labour was done here.
-Also, glyphs that are both relatively rare and also "subsets" of other glyphs
-were especially troublesome with this approach, e.g. "c" really wanted to match
-o's instead of c's
+better approach to correlation because most of the manual labour was done here
+(deleting false positives). Also, glyphs that are both relatively rare and also
+"subsets" of other glyphs were especially troublesome with this approach, e.g.
+"c" really wanted to match o's instead of c's
 
+Also, invidual glyph positioning depends on how you place the bounding box with
+the 02-pick tool. This is easy when the glyph's metrics (left/right/top/bottom)
+are clear, but in practice some glyphs "break the convention". Especially
+numbers are a bit wonky (seemingly intentionally - maybe to improve
+readability?). Some of this could probably also be automated, by considering
+neighbouring glyphs and the baseline of each line of text.
 
 
 Initial procedure:
