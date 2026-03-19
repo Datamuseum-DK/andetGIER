@@ -1515,7 +1515,6 @@ int main(int argc, char** argv)
 TODO
  - menu
  - play .flx
- - real font
  - sound
  - render paper (texture, holes...)
  - print head / ribbon motion blur render
