@@ -3,7 +3,9 @@
 static const int bus_size = 7;
 
 // how long from Za=1 until we read data bus
-static const int64_t STATE0_DELAY    = 5000000; // 5ms
+static const int64_t STATE0_DELAY0    = 5000000; // 5ms
+//static const int64_t STATE0_DELAY1    = 100000000; // 100ms
+static const int64_t STATE0_DELAY1    = 60000000; // 60ms
 
 // how long to keep ready high
 static const int64_t STATE1_DURATION = 10000000; // 10ms
@@ -14,6 +16,7 @@ static const int64_t STATE1_DURATION = 10000000; // 10ms
 // GIER board impl)
 
 static const int PIN_Za = 23;
+static const int PIN_Z0_assist = 24;
 static const int PIN_Outputs[] = {20,16,12,7,8,25,18};
 
 static const int PIN_Ready = 27;
@@ -549,6 +552,7 @@ static void gier_gpio_setup(void)
 
 	// setup pins
 	setup_gpio(PIN_Za, INPUT, PUD_OFF);
+	setup_gpio(PIN_Z0_assist, OUTPUT, PUD_OFF);
 	for (int i=0; i<bus_size; ++i) setup_gpio(PIN_Outputs[i], INPUT, PUD_UP);
 
 	setup_gpio(PIN_Lamp, INPUT, PUD_UP);
@@ -602,13 +606,14 @@ static void* gier_comm_thread(void* usr)
 
 		if (state1 == 0) {
 			assert(timeout1 == 0);
-			const int lamp = input_gpio(PIN_Lamp);
+			const int lamp = !input_gpio(PIN_Lamp);
 			atomic_store(&lamp_is_on, lamp);
 
 			if (lamp) {
 				int value = -1;
 				if (ringbuf_recv(&us2gier_ringbuf, &value)) {
 					printf("sending value to GIER: %d\n", value);
+					value ^= 0x3f;
 					for (int i=0; i<bus_size; ++i) {
 						output_gpio(PIN_Inputs[i], (value & (1<<i)) ? 1 : 0);
 					}
@@ -628,11 +633,15 @@ static void* gier_comm_thread(void* usr)
 		} else {
 			assert(!"unexpected state1");
 		}
+		
 
 		if (state0 == 0) {
 			const int za = input_gpio(PIN_Za);
-			if (za) {
-				timeout0 = now + STATE0_DELAY;
+			//printf("here read za : %d\n", za);
+			if (!za) {
+				output_gpio(PIN_Z0_assist, 1);
+				timeout0 = now + STATE0_DELAY0;
+				//printf("state0 = 0 : %d\n", state0);
 				state0 = 1;
 			}
 		} else if ((state0 == 1) && (now > timeout0)) {
@@ -640,8 +649,15 @@ static void* gier_comm_thread(void* usr)
 			for (int i=0; i<bus_size; ++i) {
 				value |= input_gpio(PIN_Outputs[i]) ? (1<<i) : 0;
 			}
-			//printf("sending value\n");
+			printf("value : %d\n", 127-value);
+
 			ringbuf_send(&gier2us_ringbuf, 127-value);
+			//printf("state0 = 1 : %d\n", state0);
+			state0 = 2;
+			timeout0 = now + STATE0_DELAY1;
+		} else if ((state0 == 2) && (now > timeout0)) {
+			output_gpio(PIN_Z0_assist, 0);
+			//printf("state0 = 2 : %d\n", state0);
 			state0 = 0;
 			timeout0 = 0;
 		}
