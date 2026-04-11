@@ -1,0 +1,37 @@
+A hardware+software replacement for the GIER typewriter, which is the
+"terminal" (part of the console) for the GIER.
+
+It's a revamp of an earlier attempt to do a typewriter simulation:
+https://datamuseum.dk/wiki/GIER/Skrivemaskinesimulering
+https://github.com/Datamuseum-DK/PIC18.flexowriter
+
+The real typewriter is in a bad/worsening state: the ribbon is almost out of
+ink, it needs rubber bands and a helping hand to move the carriage, and lately
+the motor gets burning hot (and smells like soldering) when you turn on the
+power. So the purpose then, and now, is to replace it with something longer
+term.
+
+The earlier attempt didn't work without the typewriter "helping"; GIER sends
+characters over a 7-bit data bus, and has another signal for strobing the data
+("Za"). On the receiving end the hardware must set a "wait signal" ("Z0") until
+it's ready to receive another character (a typewriter usually takes ~100ms per
+character). Simple enough at first glance, but the timing is finicky, and GIER
+starts spamming characters at a high rate if the Z0-signal doesn't come within
+a few microseconds after the Za-signal. However, when the typewriter is
+activated its circuitry generates the Z0-signal for you, so this worked for a
+while with the old design (it can still listen on bus/Za).
+
+The new design, like the old one, is a board for the D1-25 slot (we didn't have
+to rewire anything, so the old board still works). An RPi runs the typewriter
+software, and speaks with GIER over GPIO. The RPi is isolated from the GIER via
+opto-isolators. We assumed that opto-isolators, gates, and the OS adds signal
+latency, so we ended up partly solving the Z0-problem on the GIER-side of the
+opto-isolators: the Za-signal from GIER triggers a 555-timer that generates the
+"initial Z0-signal". The Za-signal is also forwarded to the RPi, which responds
+by generating a longer "Z0-assist-signal". The final Z0 signal sent to GIER is
+a logical-OR of the 555-timer Z0 and Z0-assist. See doc/ for diagrams.
+
+In an earlier revision, we tried to generate the Z0-signal exclusively with the
+555-timer (so the RPi just listened on bus+Za), but it seems that the 555
+doesn't like being triggered again microseconds after its period, see:
+doc/scope-view-of-bad-555-design.jpg
