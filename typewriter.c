@@ -186,6 +186,74 @@ X( 64 ,  _N , CAR_RETURN | LOWER | UPPER  , "\n" , NULL , SDL_SCANCODE_RETURN   
 #define COUNT_OF(xs) (sizeof(xs)/sizeof((xs)[0]))
 
 
+
+#include "typewriter_sound.h"
+
+#define LIST_OF_SAMPLES \
+X(lc) \
+X(uc) \
+X(motorlyd) \
+X(space1) \
+X(space2) \
+X(space3) \
+X(space4) \
+X(typer1) \
+X(typer2) \
+X(typer3) \
+X(typer4) \
+X(typer5) \
+X(typer6) \
+X(typer7) \
+X(typer8) \
+X(typer9) \
+X(typer10) \
+X(typer11) \
+X(typer12) \
+X(typer13) \
+X(typer14) \
+X(typer15) \
+X(typer16) \
+X(typer17) \
+X(typer18) \
+X(typer19) \
+X(typer20) \
+X(typer21) \
+X(typer22) \
+X(typer23) \
+X(typer24) \
+X(typer25) \
+X(typer26) \
+X(typer27) \
+X(typer28) \
+X(typer29) \
+X(typer30) \
+X(vognretur_kort) \
+X(vognretur_lang) \
+X(vognretur_lang1) \
+X(vognretur_lang2) \
+X(vognretur_lang3)
+
+enum sample_id {
+	#define X(NAME) NAME,
+	LIST_OF_SAMPLES
+	#undef X
+	SAMPLE_MAX
+};
+
+static int16_t* sample_data[] = {
+	#define X(NAME) typewriter_sound_ ## NAME,
+	LIST_OF_SAMPLES
+	#undef X
+};
+
+static int sample_length[] = {
+	#define X(NAME) typewriter_sound_ ## NAME ## _len / sizeof(int16_t),
+	LIST_OF_SAMPLES
+	#undef X
+};
+
+
+
 // GPIO support lib ripped from Raspberry Pi's Python GPIO library
 
 #define SETUP_OK           0
@@ -1088,6 +1156,110 @@ static void toggle_keyboard_mode(void)
 
 static int enable_gpio = 1;
 
+static SDL_AudioStream* audio_stream;
+static _Atomic int play_sample_id = -1;
+static int16_t* playing_cursor;
+static int playing_remaining;
+
+static void audio_callback(void* userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
+{
+	const int p = atomic_load(&play_sample_id);
+	if (p >= 0) {
+		assert(p < SAMPLE_MAX);
+		atomic_store(&play_sample_id, -1);
+		playing_cursor = sample_data[p];
+		playing_remaining = sample_length[p];
+	}
+
+	int16_t samples[128];
+	const size_t ssz = sizeof(samples[0]);
+	additional_amount /= ssz;
+
+	while ((additional_amount > 0) && (playing_remaining > 0)) {
+		int num = COUNT_OF(samples);
+		if (num > additional_amount) num = additional_amount;
+		if (num > playing_remaining) num = playing_remaining;
+		assert(playing_cursor != NULL);
+		memcpy(samples, playing_cursor, ssz * num);
+		playing_cursor += num;
+		playing_remaining -= num;
+		additional_amount -= num;
+		SDL_PutAudioStreamData(stream, samples, num * ssz);
+	}
+
+	if (playing_remaining <= 0) playing_cursor = NULL;
+
+	memset(samples, 0, sizeof samples);
+	while (additional_amount > 0) {
+		int num = COUNT_OF(samples);
+		if (num > additional_amount) num = additional_amount;
+		SDL_PutAudioStreamData(stream, samples, num * ssz);
+		additional_amount -= num;
+	}
+}
+
+static void play(enum sample_id sample_id)
+{
+	atomic_store(&play_sample_id, sample_id);
+}
+
+static void play_sound_for_code(int code)
+{
+	//printf("play %d\n", code);
+	assert((0 <= code) && (code <= 64));
+	const int e = code_enum[code];
+
+	if (code == 0) {
+		switch (1+(rand()%4)) {
+		case  1: play(space1);  break;
+		case  2: play(space2);  break;
+		case  3: play(space3);  break;
+		case  4: play(space4);  break;
+		default: assert(!"unhandled case");
+		}
+	} else if (code == 64) {
+		play(vognretur_lang3);
+	} else if (e == SET_UPPER) {
+		play(uc);
+	} else if (e == SET_LOWER) {
+		play(lc);
+	} else if ((e & LOWER) || (e & UPPER)) {
+		switch (1+(rand()%30)) {
+		case  1: play(typer1);  break;
+		case  2: play(typer2);  break;
+		case  3: play(typer3);  break;
+		case  4: play(typer4);  break;
+		case  5: play(typer5);  break;
+		case  6: play(typer6);  break;
+		case  7: play(typer7);  break;
+		case  8: play(typer8);  break;
+		case  9: play(typer9);  break;
+		case 10: play(typer10); break;
+		case 11: play(typer11); break;
+		case 12: play(typer12); break;
+		case 13: play(typer13); break;
+		case 14: play(typer14); break;
+		case 15: play(typer15); break;
+		case 16: play(typer16); break;
+		case 17: play(typer17); break;
+		case 18: play(typer18); break;
+		case 19: play(typer19); break;
+		case 20: play(typer20); break;
+		case 21: play(typer21); break;
+		case 22: play(typer22); break;
+		case 23: play(typer23); break;
+		case 24: play(typer24); break;
+		case 25: play(typer25); break;
+		case 26: play(typer26); break;
+		case 27: play(typer27); break;
+		case 28: play(typer28); break;
+		case 29: play(typer29); break;
+		case 30: play(typer30); break;
+		default: assert(!"unhandled case");
+		}
+	}
+}
+
 int main(int argc, char** argv)
 {
 	setup_codes();
@@ -1105,10 +1277,22 @@ int main(int argc, char** argv)
 		assert(0 == pthread_create(&thread, NULL, gier_comm_thread, NULL));
 	}
 
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
 		fprintf(stderr, "SDL_Init() failed\n");
 		exit(EXIT_FAILURE);
 	}
+
+
+	{
+		const SDL_AudioSpec spec = {
+			.format = SDL_AUDIO_S16,
+			.channels = 2,
+			.freq = 44100,
+		};
+		audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, NULL);
+		SDL_ResumeAudioStreamDevice(audio_stream);
+	}
+
 
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -1228,6 +1412,7 @@ int main(int argc, char** argv)
 	int64_t prev_time_ms = SDL_GetTicks();
 
 	int force_lamp = !enable_gpio;
+	int shifted = 0;
 
 	while (!exiting) {
 		const int64_t time_ms = SDL_GetTicks();
@@ -1244,6 +1429,7 @@ int main(int argc, char** argv)
 		int val;
 		while (ringbuf_recv(&gier2us_ringbuf, &val)) {
 			printer_push_code(&paper_printer, val);
+			play_sound_for_code(val);
 		}
 
 		printer_begin_ringbuf_tee(&paper_printer, &us2gier_ringbuf);
@@ -1262,7 +1448,12 @@ int main(int argc, char** argv)
 			if ((event.type == SDL_EVENT_KEY_DOWN) || (event.type == SDL_EVENT_KEY_UP)) {
 				is_down = event.key.down;
 				scancode = event.key.scancode;
-				printer_set_upper(&paper_printer, !!(event.key.mod & SDL_KMOD_SHIFT));
+				const int shift = !!(event.key.mod & SDL_KMOD_SHIFT);
+				if (shift != shifted) {
+					shifted = shift;
+					printer_set_upper(&paper_printer, shifted);
+					play_sound_for_code(shifted ? SET_UPPER : SET_LOWER);
+				}
 			}
 
 
@@ -1278,7 +1469,8 @@ int main(int argc, char** argv)
 							if (0) { // to allow else if expansions
 							#define X(CODE,GIDX,ENUM,UTF8,ALT,SCAN) \
 							} else if ((SCAN==scancode) && (((((ENUM) & LOWER) && !is_upper) || (((ENUM) & UPPER) && is_upper)))) { \
-								printer_push_code(&paper_printer, CODE);
+								printer_push_code(&paper_printer, CODE); \
+								play_sound_for_code(CODE);
 							LIST_OF_CODES
 							#undef X
 							}
