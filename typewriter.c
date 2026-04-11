@@ -54,7 +54,7 @@ enum {
 //  ALT:  GIER emulator alternative UTF-8 character string
 //  SCAN: SDL3 scancode for historical layout (shift/unshift info in ENUM)
 #define LIST_OF_CODES \
-/*CODE  GIDX  ENUM                          UTF8    ALT    SCAN                    */ \
+/*CODE  GIDX  ENUM                          UTF8   ALT    SCAN                    */ \
 X( 0  ,  _N , LOWER | UPPER               , " "  , NULL , SDL_SCANCODE_SPACE       ) \
 X( 1  ,   0 , LOWER                       , "1"  , NULL , SDL_SCANCODE_1           ) \
 X( 1  ,   1 , UPPER                       , "∨"  , "£"  , SDL_SCANCODE_1           ) \
@@ -164,7 +164,7 @@ X( 61 ,  _N , NOT_USED                    , NULL , NULL , _N                    
 X( 62 ,  _N , BLACK_RIBBON                , NULL , NULL , _N                       ) \
 X( 63 ,  _N , TAPE_FEED                   , NULL , NULL , _N                       ) \
 X( 64 ,  _N , CAR_RETURN | LOWER | UPPER  , "\n" , NULL , SDL_SCANCODE_RETURN      ) \
-/*CODE  GIDX  ENUM                          UTF8    ALT    SCAN                    */
+/*CODE  GIDX  ENUM                          UTF8   ALT    SCAN                    */ \
 
 #include <assert.h>
 #include <stdlib.h>
@@ -633,7 +633,6 @@ static void* gier_comm_thread(void* usr)
 		} else {
 			assert(!"unexpected state1");
 		}
-		
 
 		if (state0 == 0) {
 			const int za = input_gpio(PIN_Za);

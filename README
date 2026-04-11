@@ -35,3 +35,19 @@ In an earlier revision, we tried to generate the Z0-signal exclusively with the
 555-timer (so the RPi just listened on bus+Za), but it seems that the 555
 doesn't like being triggered again microseconds after its period, see:
 doc/scope-view-of-bad-555-design.jpg
+
+
+About the software: it's a single typewriter.c that depends on SDL3 and OpenGL
+ES 3.1. It reuses the original typewriter keyboard layout (see
+doc/original_typewriter_keyboard.jpg). It uses scancodes for this, so changing
+the OS keyboard layout has no effect. It steals/vendors/embeds the GPIO C code
+from the RPi.GPIO Python module, which mmap()s /dev/mem, so it doesn't need an
+RPi to compile, but it still requires an RPi at runtime. Unless you set
+NOGPIO=1 in env, that is (useful for devel/testing)
+
+TODO:
+ - .flx / punched tape playback
+ - reuse typerwriter sounds from Mogens' GIER emulator
+
+
+
