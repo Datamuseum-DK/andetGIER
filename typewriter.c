@@ -1198,8 +1198,11 @@ static void audio_callback(void* userdata, SDL_AudioStream *stream, int addition
 	}
 }
 
+static int enable_sound = 1;
+
 static void play(enum sample_id sample_id)
 {
+	if (!enable_sound) return;
 	atomic_store(&play_sample_id, sample_id);
 }
 
@@ -1259,6 +1262,150 @@ static void play_sound_for_code(int code)
 		}
 	}
 }
+
+#define MENU_UP    (1<<0)
+#define MENU_DOWN  (1<<1)
+#define MENU_LEFT  (1<<2)
+#define MENU_RIGHT (1<<3)
+#define MENU_ENTER (1<<4)
+
+#define MENU_NUM_CURSOR_CHARS (5)
+#define MENU_CURSOR_PERIOD_MS (400)
+
+static struct {
+	int input;
+	struct printer* pr;
+	int frame;
+	int cursor_row;
+	int num_rows;
+	int menu_cursor_time_ms;
+
+} menu_state;
+
+static void init_menu(void)
+{
+	memset(&menu_state, 0, sizeof menu_state);
+}
+
+static void begin_menu(struct printer* pr, int delta_ms, int input)
+{
+	printer_reset(pr);
+	menu_state.pr = pr;
+	menu_state.input = input;
+	++menu_state.frame;
+	menu_state.num_rows = 0;
+	menu_state.menu_cursor_time_ms += delta_ms;
+	while (menu_state.menu_cursor_time_ms > MENU_CURSOR_PERIOD_MS) {
+		menu_state.menu_cursor_time_ms -= MENU_CURSOR_PERIOD_MS;
+	}
+
+}
+
+static int is_current_menu_item(void)
+{
+	return menu_state.num_rows == menu_state.cursor_row;
+}
+
+static int is_menu_enter(void)
+{
+	return !!(menu_state.input & MENU_ENTER);
+}
+
+static void menu_head(void)
+{
+	char cursor[MENU_NUM_CURSOR_CHARS + 1];
+	for (int i=0; i<MENU_NUM_CURSOR_CHARS; ++i) {
+		if (is_current_menu_item()) {
+			const int a = (MENU_CURSOR_PERIOD_MS / MENU_NUM_CURSOR_CHARS) / 6;
+			const int ct = (menu_state.menu_cursor_time_ms + MENU_CURSOR_PERIOD_MS - i*a) % MENU_CURSOR_PERIOD_MS;
+			const int th = (MENU_CURSOR_PERIOD_MS * 7) / 10;
+			cursor[i] = ct < th ? '>' : ' ';
+		} else {
+			cursor[i] = ' ';
+		}
+	}
+	cursor[MENU_NUM_CURSOR_CHARS] = 0;
+	printer_push_utf8(menu_state.pr, cursor);
+	printer_push_utf8(menu_state.pr, "  ");
+}
+
+static void menu_text(const char* label)
+{
+	printer_push_utf8(menu_state.pr, label);
+}
+
+// XXX doesn't work with utf8 label
+static void menu_text_underscore(const char* label)
+{
+	for (const char* p = label; *p; ++p) {
+		printer_push_utf8(menu_state.pr, "_");
+		char text[2];
+		text[0] = *p;
+		text[1] = 0;
+		printer_push_utf8(menu_state.pr, text);
+	}
+}
+
+static int radio(const char* label, int* value, ...)
+{
+	menu_head();
+	menu_text(label);
+
+	va_list va;
+	va_start(va, value);
+	int num_opt = 0;
+	for (;;) {
+		const char* opt = va_arg(va, const char*);
+		if (opt == NULL) break;
+		menu_text(" ");
+		if (num_opt == *value) {
+			menu_text_underscore(opt);
+		} else {
+			menu_text(opt);
+		}
+		++num_opt;
+	}
+	va_end(va);
+	menu_text("\n");
+
+	if (is_current_menu_item()) {
+		if (menu_state.input & MENU_LEFT) {
+			--(*value);
+		} else if (menu_state.input & MENU_RIGHT) {
+			++(*value);
+		}
+	}
+
+	while (*value < 0) *value += num_opt;
+	while (*value >= num_opt) *value -= num_opt;
+
+	++menu_state.num_rows;
+	return *value;
+}
+
+static int menu(const char* label)
+{
+	menu_head();
+	menu_text(label);
+	menu_text("\n");
+	const int here = is_current_menu_item();
+	++menu_state.num_rows;
+	return here && is_menu_enter();
+}
+
+static void end_menu(void)
+{
+	if (menu_state.input & MENU_UP) {
+		--menu_state.cursor_row;
+	} else if (menu_state.input & MENU_DOWN) {
+		++menu_state.cursor_row;
+	}
+	while (menu_state.cursor_row < 0) menu_state.cursor_row += menu_state.num_rows;
+	while (menu_state.cursor_row >= menu_state.num_rows) menu_state.cursor_row -= menu_state.num_rows;
+}
+
+
+
 
 int main(int argc, char** argv)
 {
@@ -1404,9 +1551,6 @@ int main(int argc, char** argv)
 	//set_keyboard_mode(TEXT_INPUT);
 	set_keyboard_mode(SCANCODE);
 
-	const int menu_cursor_period_ms = 400;
-	int menu_cursor_time_ms = 0;
-
 	int exiting = 0;
 	int in_menu = 0;
 	int64_t prev_time_ms = SDL_GetTicks();
@@ -1422,11 +1566,6 @@ int main(int argc, char** argv)
 		const int64_t time_ms = SDL_GetTicks();
 		const int delta_ms = (int)(time_ms - prev_time_ms);
 		prev_time_ms = time_ms;
-
-		menu_cursor_time_ms += delta_ms;
-		while (menu_cursor_time_ms > menu_cursor_period_ms) {
-			menu_cursor_time_ms -= menu_cursor_period_ms;
-		}
 
 		const int lamp = atomic_load(&lamp_is_on);
 
@@ -1444,6 +1583,8 @@ int main(int argc, char** argv)
 		float scroll_max = gm * (paper_printer.state.row + 1) - height*2;
 		if (scroll_max < 0) scroll_max = 0;
 
+		int menu_input = 0;
+
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
 			if (event.type == SDL_EVENT_QUIT) {
@@ -1458,63 +1599,98 @@ int main(int argc, char** argv)
 			if ((event.type == SDL_EVENT_KEY_DOWN) || (event.type == SDL_EVENT_KEY_UP)) {
 				is_down = event.key.down;
 				scancode = event.key.scancode;
-				const int shift = !!(event.key.mod & SDL_KMOD_SHIFT);
-				if (shift != shifted) {
-					shifted = shift;
-					printer_set_upper(&paper_printer, shifted);
-					play_sound_for_code(shifted ? SET_UPPER : SET_LOWER);
-				}
 			}
 
-
-			if (!in_menu && (lamp || force_lamp)) {
-				if (event.type == SDL_EVENT_TEXT_INPUT) {
-					if (keyboard_mode == TEXT_INPUT) {
-						printer_push_utf8(&paper_printer, event.text.text);
+			if (!in_menu) {
+				if ((event.type == SDL_EVENT_KEY_DOWN) || (event.type == SDL_EVENT_KEY_UP)) {
+					const int shift = !!(event.key.mod & SDL_KMOD_SHIFT);
+					if (shift != shifted) {
+						shifted = shift;
+						printer_set_upper(&paper_printer, shifted);
+						play_sound_for_code(shifted ? SET_UPPER : SET_LOWER);
 					}
-				} else if ((event.type == SDL_EVENT_KEY_DOWN) || (event.type == SDL_EVENT_KEY_UP)) {
-					if (keyboard_mode == SCANCODE) {
-						if (is_down) {
-							const int is_upper = paper_printer.state.is_upper;
-							if (0) { // to allow else if expansions
-							#define X(CODE,GIDX,ENUM,UTF8,ALT,SCAN) \
-							} else if ((SCAN==scancode) && (((((ENUM) & LOWER) && !is_upper) || (((ENUM) & UPPER) && is_upper)))) { \
-								scroll = 0; \
-								printer_push_code(&paper_printer, CODE); \
-								play_sound_for_code(CODE);
-							LIST_OF_CODES
-							#undef X
+				}
+
+
+				if ((lamp || force_lamp)) {
+					if (event.type == SDL_EVENT_TEXT_INPUT) {
+						if (keyboard_mode == TEXT_INPUT) {
+							printer_push_utf8(&paper_printer, event.text.text);
+						}
+					} else if ((event.type == SDL_EVENT_KEY_DOWN) || (event.type == SDL_EVENT_KEY_UP)) {
+						if (keyboard_mode == SCANCODE) {
+							if (is_down) {
+								const int is_upper = paper_printer.state.is_upper;
+								if (0) { // to allow else if expansions
+								#define X(CODE,GIDX,ENUM,UTF8,ALT,SCAN) \
+								} else if ((SCAN==scancode) && (((((ENUM) & LOWER) && !is_upper) || (((ENUM) & UPPER) && is_upper)))) { \
+									scroll = 0; \
+									printer_push_code(&paper_printer, CODE); \
+									play_sound_for_code(CODE);
+								LIST_OF_CODES
+								#undef X
+								}
 							}
 						}
 					}
 				}
+
+				if (is_down && scancode == SDL_SCANCODE_F10) {
+					force_lamp = !force_lamp;
+				}
+
+				if (is_down && scancode == SDL_SCANCODE_F11) {
+					printer_toggle_ribbon(&paper_printer);
+				}
+				//if (is_down && scancode == SDL_SCANCODE_F12) toggle_keyboard_mode(); // FIXME?
+
+				if (scancode == SDL_SCANCODE_PAGEUP) {
+					if (is_down) {
+						scroll_acc = 1;
+					} else {
+						scroll_acc = 0;
+						scroll_vel = 0;
+					}
+				} else if (scancode == SDL_SCANCODE_PAGEDOWN) {
+					if (is_down) {
+						scroll_acc = -1;
+					} else {
+						scroll_acc = 0;
+						scroll_vel = 0;
+					}
+				} else if (scancode == SDL_SCANCODE_HOME) {
+					scroll = scroll_max;
+				} else if (scancode == SDL_SCANCODE_END) {
+					scroll = 0;
+				}
+
 			}
 
-			if (is_down && scancode == SDL_SCANCODE_ESCAPE) exiting = 1; // FIXME menu key
-			//if (is_down && scancode == SDL_SCANCODE_GRAVE) in_menu = !in_menu;
-			if (is_down && scancode == SDL_SCANCODE_F10) force_lamp = !force_lamp;
-			if (is_down && scancode == SDL_SCANCODE_F11) printer_toggle_ribbon(&paper_printer);
-			//if (is_down && scancode == SDL_SCANCODE_F12) toggle_keyboard_mode(); // FIXME?
-
-			if (scancode == SDL_SCANCODE_PAGEUP) {
-				if (is_down) {
-					scroll_acc = 1;
-				} else {
-					scroll_acc = 0;
-					scroll_vel = 0;
-				}
-			} else if (scancode == SDL_SCANCODE_PAGEDOWN) {
-				if (is_down) {
-					scroll_acc = -1;
-				} else {
-					scroll_acc = 0;
-					scroll_vel = 0;
-				}
-			} else if (scancode == SDL_SCANCODE_HOME) {
-				scroll = scroll_max;
-			} else if (scancode == SDL_SCANCODE_END) {
-				scroll = 0;
+			if (in_menu && is_down) {
+				if (scancode == SDL_SCANCODE_RIGHT)  menu_input |= MENU_RIGHT;
+				if (scancode == SDL_SCANCODE_LEFT)   menu_input |= MENU_LEFT;
+				if (scancode == SDL_SCANCODE_DOWN)   menu_input |= MENU_DOWN;
+				if (scancode == SDL_SCANCODE_UP)     menu_input |= MENU_UP;
+				if (scancode == SDL_SCANCODE_RETURN) menu_input |= MENU_ENTER;
 			}
+
+			if (is_down && scancode == SDL_SCANCODE_ESCAPE) {
+				if (in_menu > 0) {
+					--in_menu;
+				} else {
+					exiting = 1;
+				}
+			}
+
+			if (is_down && scancode == SDL_SCANCODE_GRAVE) {
+				if (in_menu) {
+					in_menu = 0;
+				} else {
+					in_menu = 1;
+					init_menu();
+				}
+			}
+
 		}
 
 		scroll_vel += scroll_acc;
@@ -1536,27 +1712,25 @@ int main(int argc, char** argv)
 
 		if (in_menu) {
 			struct printer* mpr = &menu_printer;
-			printer_reset(mpr);
-			//printer_push_utf8(mpr, "|< Hva så drengene,\nGIER i en '-er\ntil en _b_a_j_e_r |>");
-			// XXX hvordan indsætter jeg automatisk underscore? :) skal det
-			// være en printer state eventuelt?
-			//printer_push_utf8(mpr, "|< Hva så drengene,\nGIER i en '-er\ntil en _b_a_j_e_r |>");
-			//printer_push_utf8(mpr, "lyd: [til] fra\n");
-			//printer_push_utf8(mpr, "_l_y_d_:_ _[_t_i_l_]_ _f_r_a\n");
-
-			#define MENU_CURSOR_CHARS (5)
-			char cursor[MENU_CURSOR_CHARS + 1];
-			for (int i=0; i<MENU_CURSOR_CHARS; ++i) {
-				const int a = (menu_cursor_period_ms / MENU_CURSOR_CHARS) / 6;
-				const int ct = (menu_cursor_time_ms + menu_cursor_period_ms - i*a) % menu_cursor_period_ms;
-				const int th = (menu_cursor_period_ms * 7) / 10;
-				cursor[i] = ct < th ? '>' : ' ';
+			begin_menu(mpr, delta_ms, menu_input);
+			if (in_menu == 1) {
+				radio("Lyd:", &enable_sound, "fra", "til", NULL);
+				if (menu("Ryd tekst")) {
+					printer_reset(&paper_printer);
+					in_menu = 0;
+				}
+				if (menu("Gem tekst som .flx + .asc")) {
+					// TODO
+					in_menu = 0;
+				}
+				if (menu("Afspil .flx/.asc")) in_menu = 2;
+				if (menu("Afslut")) exiting = 1;
+			} else if (in_menu == 2) {
+				assert(!"TODO");
+			} else {
+				assert(!"unhandled menu");
 			}
-			cursor[MENU_CURSOR_CHARS] = 0;
-			printer_push_utf8(mpr, cursor);
-			printer_push_utf8(mpr, "  Afslut\n");
-			//printer_push_utf8(mpr, "  xyzzy\n");
-			#undef MENU_CURSOR_CHARS
+			end_menu();
 		}
 
 		struct printer* pr = in_menu ? &menu_printer : &paper_printer;
@@ -1753,7 +1927,6 @@ int main(int argc, char** argv)
 
 /*
 TODO
- - menu
  - play .flx
  - render paper (texture, holes...)
  - print head / ribbon motion blur render
