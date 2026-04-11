@@ -1414,6 +1414,10 @@ int main(int argc, char** argv)
 	int force_lamp = !enable_gpio;
 	int shifted = 0;
 
+	float scroll=0, scroll_vel=0, scroll_acc=0;
+
+	const float gm=96;
+
 	while (!exiting) {
 		const int64_t time_ms = SDL_GetTicks();
 		const int delta_ms = (int)(time_ms - prev_time_ms);
@@ -1433,6 +1437,12 @@ int main(int argc, char** argv)
 		}
 
 		printer_begin_ringbuf_tee(&paper_printer, &us2gier_ringbuf);
+
+		int width=-1, height=-1;
+		SDL_GetWindowSizeInPixels(window, &width, &height);
+
+		float scroll_max = gm * (paper_printer.state.row + 1) - height*2;
+		if (scroll_max < 0) scroll_max = 0;
 
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
@@ -1469,6 +1479,7 @@ int main(int argc, char** argv)
 							if (0) { // to allow else if expansions
 							#define X(CODE,GIDX,ENUM,UTF8,ALT,SCAN) \
 							} else if ((SCAN==scancode) && (((((ENUM) & LOWER) && !is_upper) || (((ENUM) & UPPER) && is_upper)))) { \
+								scroll = 0; \
 								printer_push_code(&paper_printer, CODE); \
 								play_sound_for_code(CODE);
 							LIST_OF_CODES
@@ -1480,17 +1491,41 @@ int main(int argc, char** argv)
 			}
 
 			if (is_down && scancode == SDL_SCANCODE_ESCAPE) exiting = 1; // FIXME menu key
-			if (is_down && scancode == SDL_SCANCODE_GRAVE) in_menu = !in_menu;
+			//if (is_down && scancode == SDL_SCANCODE_GRAVE) in_menu = !in_menu;
 			if (is_down && scancode == SDL_SCANCODE_F10) force_lamp = !force_lamp;
 			if (is_down && scancode == SDL_SCANCODE_F11) printer_toggle_ribbon(&paper_printer);
-			if (is_down && scancode == SDL_SCANCODE_F12) toggle_keyboard_mode(); // FIXME?
+			//if (is_down && scancode == SDL_SCANCODE_F12) toggle_keyboard_mode(); // FIXME?
+
+			if (scancode == SDL_SCANCODE_PAGEUP) {
+				if (is_down) {
+					scroll_acc = 1;
+				} else {
+					scroll_acc = 0;
+					scroll_vel = 0;
+				}
+			} else if (scancode == SDL_SCANCODE_PAGEDOWN) {
+				if (is_down) {
+					scroll_acc = -1;
+				} else {
+					scroll_acc = 0;
+					scroll_vel = 0;
+				}
+			} else if (scancode == SDL_SCANCODE_HOME) {
+				scroll = scroll_max;
+			} else if (scancode == SDL_SCANCODE_END) {
+				scroll = 0;
+			}
 		}
+
+		scroll_vel += scroll_acc;
+		scroll_vel *= .99f;
+		scroll += scroll_vel;
+		if (scroll < 0) scroll = 0;
+		if (scroll > scroll_max) scroll = scroll_max;
 
 		printer_end_ringbuf_tee(&paper_printer);
 
 		SDL_GL_MakeCurrent(window, glctx);
-		int width=-1, height=-1;
-		SDL_GetWindowSizeInPixels(window, &width, &height);
 		GLCALL(glViewport(0, 0, width, height));
 		if (in_menu) {
 			GLCALL(glClearColor(.3,.7,.5,0));
@@ -1531,8 +1566,6 @@ int main(int argc, char** argv)
 		GLCALL(glUseProgram(glyph_prg));
 		GLCALL(glBindTexture(GL_TEXTURE_2D, font_atlas.gl_texture));
 		GLCALL(glUniform1i(glyph_u_texture, 0));
-
-		const float gm=96;
 
 		for (int ribbon_pass=0; ribbon_pass<2; ++ribbon_pass) {
 
@@ -1594,7 +1627,7 @@ int main(int argc, char** argv)
 
 			const float left   = 0;
 			const float right  = left + width*2;
-			const float top    = -height*2 + (pr->state.row+1)*gm;
+			const float top    = -height*2 + (pr->state.row+1)*gm - scroll;
 			const float bottom = top + height*2;
 
 			const GLfloat ortho[] = {
@@ -1722,7 +1755,6 @@ int main(int argc, char** argv)
 TODO
  - menu
  - play .flx
- - sound
  - render paper (texture, holes...)
  - print head / ribbon motion blur render
 */
