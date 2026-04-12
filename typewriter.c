@@ -173,6 +173,7 @@ X( 64 ,  _N , CAR_RETURN | LOWER | UPPER  , "\n" , NULL , SDL_SCANCODE_RETURN   
 #include <time.h>
 #include <stdatomic.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <math.h>
 #include <pthread.h>
 
@@ -628,14 +629,14 @@ static void gier_gpio_setup(void)
 	for (int i=0; i<bus_size; ++i) setup_gpio(PIN_Inputs[i], OUTPUT, PUD_OFF);
 }
 
-#define RINGBUF_SIZE_LOG2 (16)
+#define RINGBUF_SIZE_LOG2 (24)
 #define RINGBUF_SIZE (1<<(RINGBUF_SIZE_LOG2))
 #define RINGBUF_INDEX_MASK ((1<<(RINGBUF_SIZE_LOG2))-1)
 
 struct ringbuf {
 	_Atomic int read_cursor;
 	_Atomic int write_cursor;
-	int buffer[RINGBUF_SIZE];
+	uint8_t buffer[RINGBUF_SIZE];
 };
 
 static struct ringbuf us2gier_ringbuf, gier2us_ringbuf;
@@ -656,6 +657,15 @@ static int ringbuf_recv(struct ringbuf* rb, int* out_value)
 	atomic_store(&rb->read_cursor, (rc+1));
 	if (out_value) *out_value = value;
 	return 1;
+}
+
+static int ringbuf_left(struct ringbuf* rb)
+{
+	const int wc = atomic_load(&rb->write_cursor);
+	const int rc = atomic_load(&rb->read_cursor);
+	int left = (wc-rc);
+	if (left < 0) left = 0;
+	return left;
 }
 
 static _Atomic int gpio_thread_exiting;
@@ -680,7 +690,7 @@ static void* gier_comm_thread(void* usr)
 			if (lamp) {
 				int value = -1;
 				if (ringbuf_recv(&us2gier_ringbuf, &value)) {
-					printf("sending value to GIER: %d\n", value);
+					//printf("sending value to GIER: %d\n", value);
 					value ^= 0x3f;
 					for (int i=0; i<bus_size; ++i) {
 						output_gpio(PIN_Inputs[i], (value & (1<<i)) ? 1 : 0);
@@ -716,7 +726,7 @@ static void* gier_comm_thread(void* usr)
 			for (int i=0; i<bus_size; ++i) {
 				value |= input_gpio(PIN_Outputs[i]) ? (1<<i) : 0;
 			}
-			printf("value : %d\n", 127-value);
+			//printf("value : %d\n", 127-value);
 
 			ringbuf_send(&gier2us_ringbuf, 127-value);
 			//printf("state0 = 1 : %d\n", state0);
@@ -865,7 +875,7 @@ static void printer_init(struct printer* pr)
 
 static void printer_begin_ringbuf_tee(struct printer* p, struct ringbuf* rb)
 {
-	assert((p->ringbuf_tee == NULL) && "");
+	assert((p->ringbuf_tee == NULL) && "already set");
 	p->ringbuf_tee = rb;
 }
 
@@ -1276,10 +1286,11 @@ static struct {
 	int input;
 	struct printer* pr;
 	int frame;
+	int num_items;
 	int cursor_row;
-	int num_rows;
+	int num_screen_rows;
+	int scroll;
 	int menu_cursor_time_ms;
-
 } menu_state;
 
 static void init_menu(void)
@@ -1287,23 +1298,25 @@ static void init_menu(void)
 	memset(&menu_state, 0, sizeof menu_state);
 }
 
-static void begin_menu(struct printer* pr, int delta_ms, int input)
+static void begin_menu(struct printer* pr, int delta_ms, int input, int num_screen_rows)
 {
+	//printf("n=%d\n", num_screen_rows);
 	printer_reset(pr);
 	menu_state.pr = pr;
 	menu_state.input = input;
+	menu_state.num_screen_rows = num_screen_rows;
 	++menu_state.frame;
-	menu_state.num_rows = 0;
+	menu_state.num_items = 0;
 	menu_state.menu_cursor_time_ms += delta_ms;
 	while (menu_state.menu_cursor_time_ms > MENU_CURSOR_PERIOD_MS) {
 		menu_state.menu_cursor_time_ms -= MENU_CURSOR_PERIOD_MS;
 	}
-
+	menu_state.scroll = menu_state.cursor_row + menu_state.num_screen_rows/2;
 }
 
 static int is_current_menu_item(void)
 {
-	return menu_state.num_rows == menu_state.cursor_row;
+	return menu_state.num_items == menu_state.cursor_row;
 }
 
 static int is_menu_enter(void)
@@ -1379,7 +1392,7 @@ static int radio(const char* label, int* value, ...)
 	while (*value < 0) *value += num_opt;
 	while (*value >= num_opt) *value -= num_opt;
 
-	++menu_state.num_rows;
+	++menu_state.num_items;
 	return *value;
 }
 
@@ -1389,7 +1402,7 @@ static int menu(const char* label)
 	menu_text(label);
 	menu_text("\n");
 	const int here = is_current_menu_item();
-	++menu_state.num_rows;
+	++menu_state.num_items;
 	return here && is_menu_enter();
 }
 
@@ -1400,12 +1413,58 @@ static void end_menu(void)
 	} else if (menu_state.input & MENU_DOWN) {
 		++menu_state.cursor_row;
 	}
-	while (menu_state.cursor_row < 0) menu_state.cursor_row += menu_state.num_rows;
-	while (menu_state.cursor_row >= menu_state.num_rows) menu_state.cursor_row -= menu_state.num_rows;
+	while (menu_state.cursor_row < 0) menu_state.cursor_row += menu_state.num_items;
+	while (menu_state.cursor_row >= menu_state.num_items) menu_state.cursor_row -= menu_state.num_items;
 }
 
+static char current_tapes_basedir[1<<12];
 
+static const char* get_ext(const char* filename)
+{
+	const char* ext = NULL;
+	for (const char* p = filename; *p; ++p) {
+		if (*p == '.') ext=p;
+	}
+	return ext;
+}
 
+static int has_ext(const char* filename, const char* ext)
+{
+	const char* fext = get_ext(filename);
+	if (fext == 0) return 0;
+	return 0==strcmp(ext, fext);
+}
+
+static int utf8_to_latin1(const char* str)
+{
+	if (str == NULL) return -1;
+	const int n = strlen(str);
+	if (n==1 && str[0]>0) {
+		return str[0];
+	} else if (n==2) {
+		const int b0 = (uint8_t)(str[0]);
+		const int b1 = (uint8_t)(str[1]);
+		const int v = (b1 & 0x3f) + ((b0 & 0x1f) << 6);
+		if (v<256) return v;
+	}
+	return -1;
+}
+
+static int decode_asc(int byte, int* out_code, int* out_is_upper)
+{
+	#define X(CODE,_GIDX,ENUM,UTF8,ALT,_SCAN) \
+	{ \
+		const char* alt = ALT; \
+		const char* utf8 = UTF8; \
+		if ((byte==utf8_to_latin1(alt)) || byte==utf8_to_latin1(utf8)) { \
+			*out_code = CODE; \
+			*out_is_upper = !!(ENUM & UPPER); \
+			return 1; \
+		} \
+	}
+	LIST_OF_CODES
+	#undef X
+}
 
 int main(int argc, char** argv)
 {
@@ -1541,7 +1600,6 @@ int main(int argc, char** argv)
 	const GLint draw_a_position   = glGetAttribLocation(draw_prg,  "a_position"); GLCHECK;
 	const GLint draw_a_color      = glGetAttribLocation(draw_prg,  "a_color"); GLCHECK;
 
-
 	struct printer paper_printer;
 	printer_init(&paper_printer);
 
@@ -1554,11 +1612,13 @@ int main(int argc, char** argv)
 	int exiting = 0;
 	int in_menu = 0;
 	int64_t prev_time_ms = SDL_GetTicks();
+	int is_sending_file = 0;
 
 	int force_lamp = !enable_gpio;
 	int shifted = 0;
 
 	float scroll=0, scroll_vel=0, scroll_acc=0;
+	const char* errmsg = NULL;
 
 	const float gm=96;
 
@@ -1703,7 +1763,9 @@ int main(int argc, char** argv)
 
 		SDL_GL_MakeCurrent(window, glctx);
 		GLCALL(glViewport(0, 0, width, height));
-		if (in_menu) {
+		if (is_sending_file) {
+			GLCALL(glClearColor(.9,.6,.4,0));
+		} else if (in_menu) {
 			GLCALL(glClearColor(.3,.7,.5,0));
 		} else {
 			GLCALL(glClearColor(.9,.85,.7,0));
@@ -1712,7 +1774,7 @@ int main(int argc, char** argv)
 
 		if (in_menu) {
 			struct printer* mpr = &menu_printer;
-			begin_menu(mpr, delta_ms, menu_input);
+			begin_menu(mpr, delta_ms, menu_input, (2*height) / gm);
 			if (in_menu == 1) {
 				radio("Lyd:", &enable_sound, "fra", "til", NULL);
 				if (menu("Ryd tekst")) {
@@ -1723,17 +1785,138 @@ int main(int argc, char** argv)
 					// TODO
 					in_menu = 0;
 				}
-				if (menu("Afspil .flx/.asc")) in_menu = 2;
+				if (menu("Afspil .flx/.asc ...")) {
+					strcpy(current_tapes_basedir, "tapes");
+					in_menu = 2;
+					menu_state.cursor_row = 0;
+				}
 				if (menu("Afslut")) exiting = 1;
 			} else if (in_menu == 2) {
-				assert(!"TODO");
+				// XXX reading a dir at 60hz feels a bit wrong, but... YOLO!
+				DIR* dir = opendir(current_tapes_basedir);
+				if (dir == NULL) {
+					in_menu = -1;
+					errmsg = "kunne ikke åbne dir";
+				} else {
+					char name[NAME_MAX+10];
+					int did_select = 0;
+					for (;;) {
+						struct dirent* ent = readdir(dir);
+						if (ent == NULL) break;
+						strcpy(name, ent->d_name);
+						if (0==strcmp(".", name)) continue;
+						if (0==strcmp("..", name)) continue;
+						const int n = strlen(name);
+						int type;
+						if (ent->d_type == DT_DIR) {
+							type = 2;
+							name[n] = '/';
+							name[n+1] = 0;
+						} else {
+							if (!has_ext(name, ".flx") && !has_ext(name, ".asc")) continue;
+							type = 1;
+							name[n] = 0;
+						}
+						if (menu(name)) {
+							did_select = type;
+							name[n] = 0; // remove '/' (if DT_DIR)
+							break;
+						}
+					}
+					assert(0 == closedir(dir));
+					char catpath[2048];
+					snprintf(catpath, sizeof catpath, "%s/%s", current_tapes_basedir, name);
+					if (did_select == 2) {
+						strcpy(current_tapes_basedir, catpath);
+						menu_state.cursor_row = 0;
+					} else if (did_select == 1) {
+						in_menu = 0;
+						FILE* f = fopen(catpath, "rb");
+						if (f == NULL) {
+							errmsg = "kunne ikke åbne fil";
+							in_menu = -1;
+						} else {
+							const int is_flx = has_ext(name, ".flx");
+							const int is_asc = has_ext(name, ".asc");
+							int is_upper = 0;
+							while (!feof(f)) {
+								uint8_t b;
+								const size_t n = fread(&b, sizeof b, 1, f);
+								if (n != 1) {
+									if (feof(f)) break;
+									errmsg = "læsefejl";
+									in_menu = -1;
+									break;
+								}
+								if (is_flx) {
+									// .flx is an 8-bit encoding with 7 data
+									// bits + parity bit, like this:
+									//   64 32 16 parity 8 4 2 1
+									// parity is chosen so there's an odd
+									// number of bits in total
+									// see also: https://datamuseum.dk/wiki/GIERs_tegns%C3%A6t
+									int num_bits = 0;
+									for (int i=1; i<=0x80; i<<=1) {
+										if (b&i) ++num_bits;
+									}
+									if ((num_bits & 1) == 0) {
+										errmsg = "paritetsfejl i .flx";
+										in_menu = -1;
+										break;
+									}
+
+									// remove parity bit
+									b = (b & (1+2+4+8)) + ((b>>1) & (16+32+64));
+
+									ringbuf_send(&us2gier_ringbuf, b);
+								} else if (is_asc) {
+									// .asc is iso-8859-1 (latin-1) encoded.
+									// the non-standard GIER chars have latin-1
+									// replacements, e.g. "£". these correspond
+									// to the "ALT" column in LIST_OF_CODES.
+									// also takes care of upper/lowercase
+									// "prefixes"
+									int char_is_upper = 0;
+									int giercode = 0;
+									if (decode_asc(b, &giercode, &char_is_upper)) {
+										if (char_is_upper != is_upper) {
+											is_upper = char_is_upper;
+											ringbuf_send(&us2gier_ringbuf, is_upper ? SET_UPPER : SET_LOWER);
+										}
+									}
+									ringbuf_send(&us2gier_ringbuf, giercode);
+								} else {
+									assert(!"unhandled file type");
+								}
+							}
+							fclose(f);
+							is_sending_file = 1;
+							in_menu = 0;
+						}
+					}
+				}
+			} else if (in_menu == -1) {
+				if (menu(errmsg != NULL ? errmsg : "DER SKETE EN FEJL")) in_menu = 0;
 			} else {
 				assert(!"unhandled menu");
 			}
 			end_menu();
 		}
 
-		struct printer* pr = in_menu ? &menu_printer : &paper_printer;
+		struct printer* pr = NULL;
+		if (in_menu) {
+			pr = &menu_printer;
+		} else if (is_sending_file) {
+			pr = &menu_printer;
+			printer_reset(pr);
+			char buf[1<<10];
+			const int left = ringbuf_left(&us2gier_ringbuf);
+			snprintf(buf, sizeof buf, "%d bytes tilbage...", left);
+			printer_push_utf8(menu_state.pr, buf);
+			if (left == 0) is_sending_file = 0;
+		} else {
+			pr = &paper_printer;
+		}
 
 		// draw text
 
@@ -1801,7 +1984,7 @@ int main(int argc, char** argv)
 
 			const float left   = 0;
 			const float right  = left + width*2;
-			const float top    = -height*2 + (pr->state.row+1)*gm - scroll;
+			const float top    = -height*2 + (in_menu ? (menu_state.scroll*gm) : ((pr->state.row+1)*gm - scroll));
 			const float bottom = top + height*2;
 
 			const GLfloat ortho[] = {
@@ -1927,7 +2110,6 @@ int main(int argc, char** argv)
 
 /*
 TODO
- - play .flx
  - render paper (texture, holes...)
  - print head / ribbon motion blur render
 */
