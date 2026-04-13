@@ -1524,7 +1524,6 @@ int main(int argc, char** argv)
 			enable_gpio = 0;
 		}
 	}
-	enable_gpio = 0;
 
 	pthread_t thread;
 	if (enable_gpio) {
