@@ -1670,6 +1670,7 @@ int main(int argc, char** argv)
 	set_keyboard_mode(SCANCODE);
 
 	int exiting = 0;
+	int fullscreen = 0;
 	int in_menu = 0;
 	int64_t prev_time_ms = SDL_GetTicks();
 	int is_sending_file = 0;
@@ -1847,6 +1848,13 @@ int main(int argc, char** argv)
 				if (enable_audio) {
 					radio("Lyd:", &enable_sound, "fra", "til", NULL);
 				}
+
+				int fullscreen_before = fullscreen;
+				radio("Fuldskærm:", &fullscreen, "nej", "ja", NULL);
+				if (fullscreen != fullscreen_before) {
+					SDL_SetWindowFullscreen(window, fullscreen);
+				}
+
 
 				radio("Følg lampe:", &force_lamp, "ja", "nej", NULL);
 
