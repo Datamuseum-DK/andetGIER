@@ -1,0 +1,26 @@
+Skrivemaskineprogrammet følger GIER-skrivemaskinens tastaturlayout, ikke dansk,
+eller hvad operativsystemet er sat op til.
+
+[PgUp]/[PgDn]/[Home]/[End] scroller teksten op/ned.
+
+Tasten under [ESC] åbner(/lukker) menu.
+
+Menu:
+ - "Lyd": slå lyd til eller fra
+ - "Følg lampe": normalt respekterer programmet GIER'ens
+   "skrivemaskinelampesignal", der fortæller om skrivemaskinen må skrive/sende
+   tegn. Hvis den er slået fra kan du skrive/sende tegn uanset
+ - "Ryd tekst": "clear screen", sletter tekst du har modtaget/skrevet (sletter
+   også flx/asc buffer)
+ - "Gem..." gemmer en .flx og .asc fil af teksten (alt modtaget eller skrevet)
+ - "Afspil .flx/.asc ...": går til en "fildialog" hvor du kan vælge en .flx
+   eller .asc fil at sende til GIER
+
+
+Miljøvariabler:
+
+NOGPIO=1 - ingen GPIO; programmet er bare en skrivemaskine (brugbart hvis du
+tester på andet end en Raspberry Pi)
+
+NOAUDIO=1 - ingen lyd / device init
+
