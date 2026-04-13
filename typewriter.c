@@ -1784,11 +1784,7 @@ int main(int argc, char** argv)
 			}
 
 			if (is_down && scancode == SDL_SCANCODE_ESCAPE) {
-				if (in_menu > 0) {
-					in_menu = 0;
-				} else {
-					exiting = 1;
-				}
+				in_menu = 0;
 			}
 
 			if (is_down && scancode == SDL_SCANCODE_GRAVE) {
