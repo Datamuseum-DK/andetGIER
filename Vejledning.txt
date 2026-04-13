@@ -7,6 +7,7 @@ Tasten under [ESC] åbner(/lukker) menu.
 
 Menu:
  - "Lyd": slå lyd til eller fra
+ - "Fuldskærm": lad vinduet fylde hele skærmen
  - "Følg lampe": normalt respekterer programmet GIER'ens
    "skrivemaskinelampesignal", der fortæller om skrivemaskinen må skrive/sende
    tegn. Hvis den er slået fra kan du skrive/sende tegn uanset
