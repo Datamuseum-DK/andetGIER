@@ -1189,6 +1189,7 @@ static void toggle_keyboard_mode(void)
 }
 
 static int enable_gpio = 1;
+static int enable_audio = 1;
 
 static SDL_AudioStream* audio_stream;
 static _Atomic int play_sample_id = -1;
@@ -1525,19 +1526,29 @@ int main(int argc, char** argv)
 		}
 	}
 
+	{
+		const char* e = getenv("NOAUDIO");
+		if ((e != NULL) && atoi(e) > 0) {
+			enable_audio = 0;
+		}
+	}
+
 	pthread_t thread;
 	if (enable_gpio) {
 		gier_gpio_setup();
 		assert(0 == pthread_create(&thread, NULL, gier_comm_thread, NULL));
 	}
 
-	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+
+	uint32_t sdl_flags = SDL_INIT_VIDEO;
+	if (enable_audio) sdl_flags |= SDL_INIT_AUDIO;
+	if (!SDL_Init(sdl_flags)) {
 		fprintf(stderr, "SDL_Init() failed\n");
 		exit(EXIT_FAILURE);
 	}
 
 
-	{
+	if (enable_audio) {
 		const SDL_AudioSpec spec = {
 			.format = SDL_AUDIO_S16,
 			.channels = 2,
@@ -1833,7 +1844,10 @@ int main(int argc, char** argv)
 
 			if (in_menu == 1) {
 
-				radio("Lyd:", &enable_sound, "fra", "til", NULL);
+				if (enable_audio) {
+					radio("Lyd:", &enable_sound, "fra", "til", NULL);
+				}
+
 				radio("Følg lampe:", &force_lamp, "ja", "nej", NULL);
 
 				if (menu("Ryd tekst")) {
