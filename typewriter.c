@@ -1796,10 +1796,6 @@ int main(int argc, char** argv)
 			}
 
 			if (is_down && scancode == SDL_SCANCODE_ESCAPE) {
-				in_menu = 0;
-			}
-
-			if (is_down && scancode == SDL_SCANCODE_GRAVE) {
 				if (in_menu) {
 					in_menu = 0;
 				} else {

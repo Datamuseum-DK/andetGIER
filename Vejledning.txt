@@ -3,7 +3,12 @@ eller hvad operativsystemet er sat op til.
 
 [PgUp]/[PgDn]/[Home]/[End] scroller teksten op/ned.
 
-Tasten under [ESC] åbner(/lukker) menu.
+[Esc] åbner(/lukker) menu.
+
+Cirkel øverst til højre er "skrivemaskinelampen", styret af GIER:
+ - grøn: lampe tændt, GIER er klar til tastetryk
+ - sort: lampe slukket, GIER er ikke klar, og du kan ikke skrive
+ - lilla: "Følg lampe" i menuen er slået fra, og du kan skrive uanset
 
 Menu:
  - "Lyd": slå lyd til eller fra
