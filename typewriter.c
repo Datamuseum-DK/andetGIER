@@ -1569,7 +1569,7 @@ int main(int argc, char** argv)
 
 	SDL_GL_SetSwapInterval(1);
 
-	window = SDL_CreateWindow("skrivemaskine", 1920, 1080, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+	window = SDL_CreateWindow("skrivemaskine", 1920, 1080, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_INPUT_FOCUS);
 	assert((window != NULL) && "could not create window");
 
 	SDL_GLContext glctx;
