@@ -2094,7 +2094,7 @@ int main(int argc, char** argv)
 
 			const float left   = 0;
 			const float right  = left + width*2;
-			const float top    = -height*2 + (in_menu ? (menu_state.scroll*gm) : ((pr->state.row+1)*gm - scroll));
+			const float top    = -height*2 + (in_menu ? (menu_state.scroll*gm) : ((pr->state.row+1)*gm - (is_sending_file ? 0 : scroll)));
 			const float bottom = top + height*2;
 
 			const GLfloat ortho[] = {
