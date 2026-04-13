@@ -174,6 +174,7 @@ X( 64 ,  _N , CAR_RETURN | LOWER | UPPER  , "\n" , NULL , SDL_SCANCODE_RETURN   
 #include <stdatomic.h>
 #include <ctype.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <math.h>
 #include <pthread.h>
 
@@ -858,11 +859,27 @@ struct printer {
 	int num_glyphs;
 	struct print_glyph* glyphs;
 	struct ringbuf* ringbuf_tee;
+	uint8_t* memory;
+	int memory_cursor, memory_size;
 };
+
+static void printer_reset_memory(struct printer* p)
+{
+	p->memory_cursor = 0;
+}
+
+static void printer_set_memory(struct printer* p, size_t size)
+{
+	p->memory = malloc(size);
+	assert(p->memory != NULL);
+	p->memory_size = size;
+	printer_reset_memory(p);
+}
 
 static void printer_reset(struct printer* pr)
 {
 	printer_state_reset(&pr->state);
+	printer_reset_memory(pr);
 	pr->num_glyphs = 0;
 }
 
@@ -890,6 +907,11 @@ static void printer_push_code(struct printer* pr, int code)
 	//printf("push code %d\n", code);
 	struct printer_state* state = &pr->state;
 	if (!is_valid_code(code)) return;
+
+	if ((pr->memory != NULL) && (pr->memory_cursor < pr->memory_size)) {
+		pr->memory[pr->memory_cursor++] = code;
+	}
+
 	const int e = code_enum[code];
 	if ((e & LOWER) || (e & UPPER)) {
 		const int gidx = (state->is_upper ? code_upper_gidx : code_lower_gidx)[code];
@@ -928,6 +950,7 @@ static void printer_push_utf8(struct printer* pr, const char* utf8)
 	const char* p = utf8;
 	const char* pend = p + strlen(p);
 	while (p < pend) {
+		const char* p0 = p;
 		#define X(CODE,GIDX,ENUM,UTF8,ALT,SCAN) \
 		{ \
 			const char* s = NULL; \
@@ -967,6 +990,7 @@ static void printer_push_utf8(struct printer* pr, const char* utf8)
 		}
 		LIST_OF_CODES
 		#undef X
+		assert(p>p0);
 	}
 	assert(p == pend);
 }
@@ -1280,7 +1304,7 @@ static void play_sound_for_code(int code)
 #define MENU_ENTER (1<<4)
 
 #define MENU_NUM_CURSOR_CHARS (5)
-#define MENU_CURSOR_PERIOD_MS (400)
+#define MENU_CURSOR_PERIOD_MS (451)
 
 static struct {
 	int input;
@@ -1329,10 +1353,8 @@ static void menu_head(void)
 	char cursor[MENU_NUM_CURSOR_CHARS + 1];
 	for (int i=0; i<MENU_NUM_CURSOR_CHARS; ++i) {
 		if (is_current_menu_item()) {
-			const int a = (MENU_CURSOR_PERIOD_MS / MENU_NUM_CURSOR_CHARS) / 6;
-			const int ct = (menu_state.menu_cursor_time_ms + MENU_CURSOR_PERIOD_MS - i*a) % MENU_CURSOR_PERIOD_MS;
-			const int th = (MENU_CURSOR_PERIOD_MS * 7) / 10;
-			cursor[i] = ct < th ? '>' : ' ';
+			const int blink = (menu_state.menu_cursor_time_ms % MENU_CURSOR_PERIOD_MS) > (MENU_CURSOR_PERIOD_MS/4);
+			cursor[i] = blink ? '>' : ' ';
 		} else {
 			cursor[i] = ' ';
 		}
@@ -1384,7 +1406,7 @@ static int radio(const char* label, int* value, ...)
 	if (is_current_menu_item()) {
 		if (menu_state.input & MENU_LEFT) {
 			--(*value);
-		} else if (menu_state.input & MENU_RIGHT) {
+		} else if (menu_state.input & (MENU_RIGHT | MENU_ENTER)) {
 			++(*value);
 		}
 	}
@@ -1464,6 +1486,32 @@ static int decode_asc(int byte, int* out_code, int* out_is_upper)
 	}
 	LIST_OF_CODES
 	#undef X
+	return 0;
+}
+
+static uint8_t encode_asc(int code, int is_upper)
+{
+	#define X(CODE,_GIDX,ENUM,UTF8,ALT,_SCAN) \
+	{ \
+		const char* alt = ALT; \
+		const char* utf8 = UTF8; \
+		const char* src = (alt!=NULL) ? alt : (utf8!=NULL) ? utf8 : NULL; \
+		const int c = (CODE); \
+		const int e = (ENUM); \
+		if ((src != NULL) && (code == c) && ((is_upper && (e & UPPER)) || (!is_upper && (e & LOWER)))) { \
+			return utf8_to_latin1(src); \
+		} \
+	}
+	LIST_OF_CODES
+	#undef X
+	return 0;
+}
+
+static int popcnt8(uint8_t b)
+{
+	int count = 0;
+	for (int i=1; i<=0x80; i<<=1) if (b&i) ++count;
+	return count;
 }
 
 int main(int argc, char** argv)
@@ -1476,6 +1524,7 @@ int main(int argc, char** argv)
 			enable_gpio = 0;
 		}
 	}
+	enable_gpio = 0;
 
 	pthread_t thread;
 	if (enable_gpio) {
@@ -1602,6 +1651,7 @@ int main(int argc, char** argv)
 
 	struct printer paper_printer;
 	printer_init(&paper_printer);
+	printer_set_memory(&paper_printer, 1<<20);
 
 	struct printer menu_printer;
 	printer_init(&menu_printer);
@@ -1775,18 +1825,83 @@ int main(int argc, char** argv)
 		if (in_menu) {
 			struct printer* mpr = &menu_printer;
 			begin_menu(mpr, delta_ms, menu_input, (2*height) / gm);
+			char buf[1<<10];
+			const char* tapes_basedir = "tapes";
+
+			const time_t now = time(NULL);
+			struct tm* now_here = localtime(&now);
+			char save_dir[1<<12];
+			snprintf(save_dir, sizeof save_dir, "%s/tapeten-%.4d-%.2d-%.2d", tapes_basedir, (1900+now_here->tm_year), (1+now_here->tm_mon), now_here->tm_mday);
+
+			char save_path[1<<12];
+			snprintf(save_path, sizeof save_path, "%s/dump-%.2dh%.2dm%.2ds.flx", save_dir, now_here->tm_hour, now_here->tm_min, now_here->tm_sec);
+
 			if (in_menu == 1) {
+
 				radio("Lyd:", &enable_sound, "fra", "til", NULL);
+				radio("Følg lampe:", &force_lamp, "ja", "nej", NULL);
+
 				if (menu("Ryd tekst")) {
 					printer_reset(&paper_printer);
 					in_menu = 0;
 				}
-				if (menu("Gem tekst som .flx + .asc")) {
-					// TODO
+
+				snprintf(buf, sizeof buf, "Gem %s/.asc (%d tegn)", save_path, paper_printer.memory_cursor);
+				if (menu(buf)) {
+					mkdir(save_dir, 0755);
+
+					struct printer* pr = &paper_printer;
+					FILE* f;
+
+					f = fopen(save_path, "wb");
+					if (f == NULL) {
+						errmsg = "kunne ikke skrive .flx";
+						in_menu = -1;
+					} else {
+						for (int i=0; i<pr->memory_cursor; ++i) {
+							uint8_t b = pr->memory[i];
+							b = (b & (1+2+4+8)) + ((b & (16+32+64)) << 1);
+							if ((popcnt8(b) & 1) == 0) {
+								b |= 16;
+							}
+							assert(((popcnt8(b) & 1) == 1) && "parity logic not working");
+							assert(1 == fwrite(&b, sizeof b, 1, f));
+						}
+						fclose(f);
+					}
+
+					assert(save_path[strlen(save_path)-3] == 'f');
+					assert(save_path[strlen(save_path)-2] == 'l');
+					assert(save_path[strlen(save_path)-1] == 'x');
+					save_path[strlen(save_path)-3] = 'a';
+					save_path[strlen(save_path)-2] = 's';
+					save_path[strlen(save_path)-1] = 'c';
+					f = fopen(save_path, "wb");
+					if (f == NULL) {
+						errmsg = "kunne ikke skrive .asc";
+						in_menu = -1;
+					} else {
+						int is_upper=0;
+						for (int i=0; i<pr->memory_cursor; ++i) {
+							const uint8_t b = pr->memory[i];
+							if (!is_valid_code(b)) continue;
+							const int e = code_enum[b];
+							if (e == SET_UPPER) {
+								is_upper = 1;
+							} else if (e == SET_LOWER) {
+								is_upper = 0;
+							} else {
+								const uint8_t a = encode_asc(b, is_upper);
+								if (a>0) assert(1 == fwrite(&a, sizeof a, 1, f));
+							}
+						}
+						fclose(f);
+					}
+
 					in_menu = 0;
 				}
 				if (menu("Afspil .flx/.asc ...")) {
-					strcpy(current_tapes_basedir, "tapes");
+					strcpy(current_tapes_basedir, tapes_basedir);
 					in_menu = 2;
 					menu_state.cursor_row = 0;
 				}
@@ -1855,11 +1970,7 @@ int main(int argc, char** argv)
 									// parity is chosen so there's an odd
 									// number of bits in total
 									// see also: https://datamuseum.dk/wiki/GIERs_tegns%C3%A6t
-									int num_bits = 0;
-									for (int i=1; i<=0x80; i<<=1) {
-										if (b&i) ++num_bits;
-									}
-									if ((num_bits & 1) == 0) {
+									if ((popcnt8(b) & 1) == 0) {
 										errmsg = "paritetsfejl i .flx";
 										in_menu = -1;
 										break;
