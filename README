@@ -45,9 +45,3 @@ from the RPi.GPIO Python module, which mmap()s /dev/mem, so it doesn't need an
 RPi to compile, but it still requires an RPi at runtime. Unless you set
 NOGPIO=1 in env, that is (useful for devel/testing)
 
-TODO:
- - .flx / punched tape playback
- - reuse typerwriter sounds from Mogens' GIER emulator
-
-
-
