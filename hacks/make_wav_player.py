@@ -24,28 +24,58 @@ def load_wav(path, seed=1):
    assert len(words)<950, ("cannot load %s: program too big" % path)
    return words
 
-if len(sys.argv) != 2:
-   sys.stderr.write("Usage: %s <pcm.wav> > pcm.asc\n" % sys.argv[0])
+if len(sys.argv) != 3:
+   sys.stderr.write("Usage: %s <sample rate: 12500 or 25000> <pcm.wav> > pcm.asc\n" % sys.argv[0])
+   sys.stderr.write(".wav file must be mono and 16-bit\n")
    sys.exit(1)
 
-words = load_wav(sys.argv[1])
 
-print("""
-_b i=41, a3
-a0:
-   ; pan a1 t+a2
-    pan a1 t+84 ; XXX hack, slip.py doesn't support t+<label> yet
-a1:
-   arn t+1 IPA
-""")
-for i in range(39): print("   tk 0, tk 1")
-print("""
-   hv a1 NPA
-   hv a0
-""")
+rate = int(sys.argv[1])
 
-print("_m")
-print("a2:")
-for i,w in enumerate(words):
-   print(str(w) + ["","a"][i == len(words)-1])
-print("_e41")
+words = load_wav(sys.argv[2])
+
+if rate == 12500:
+   print("""
+   _b i=41, a3
+   a0:
+      ; pan a1 t+a2
+       pan a1 t+84 ; XXX hack, slip.py doesn't support t+<label> yet
+   a1:
+      arn t+1 IPA
+   """)
+   for i in range(39): print("   tk 0, tk 1")
+   print("""
+      hv a1 NPA
+      hv a0
+   """)
+
+   print("_m")
+   print("a2:")
+   for i,w in enumerate(words):
+      print(str(w) + ["","a"][i == len(words)-1])
+   print("_e41")
+
+elif rate == 25000:
+   print("""
+   _b i=41, a3
+   a0:
+      ; pan a1 t+a2
+       pan a1 t+64 ; XXX hack, slip.py doesn't support t+<label> yet
+   a1:
+      arn t+1 IPA
+   """)
+   for i in range(38//2): print("   tk 1, tk 1")
+   print("""
+      tk 1
+      hv a1 NPA
+      hv a0
+   """)
+
+   print("_m")
+   print("a2:")
+   for i,w in enumerate(words):
+      print(str(w) + ["","a"][i == len(words)-1])
+   print("_e41")
+
+else:
+   raise RuntimeError("unsupported sample rate %d" % rate)
