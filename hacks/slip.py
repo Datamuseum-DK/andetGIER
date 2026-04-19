@@ -179,7 +179,7 @@ BIT_FLOAT = 41
 RSP_ABSOLUTE = 0
 RSP_RELATIVE = 2
 RSP_INDEXED = 3
-RSP_SUBROUTINE_INDEXED = 1
+RSP_SEQUENCED = 1
 
 IOPS = ("IMNL", "KZOTPQR", "BAC")
 
@@ -431,7 +431,7 @@ class Op:
             asm += "r%s" % signed10(addr)
          elif rsp == RSP_INDEXED:
             asm += "p%s" % signed10(addr)
-         elif rsp == RSP_SUBROUTINE_INDEXED:
+         elif rsp == RSP_SEQUENCED:
             asm += "s%s" % signed10(addr)
          else: assert False, "unreachable"
 
@@ -450,6 +450,8 @@ class Op:
                asm += IOPS[0][iop]
                if k>0: asm += IOPS[1][k-1]
                if abc>0: asm += IOPS[2][abc-1]
+
+         if self.get_float(): asm += " F"
 
          parts.append(asm)
 
@@ -603,7 +605,7 @@ def asm_op(str):
             if len(item)>1:
                op.set_addr(half, int(item[1:]))
          elif cc=='s':
-            op.set_rsp(half, RSP_SUBROUTINE_INDEXED)
+            op.set_rsp(half, RSP_SEQUENCED)
             if len(item)>1:
                op.set_addr(half, int(item[1:]))
          elif cc=='t':
@@ -678,10 +680,15 @@ def asm_asc(asc_in, flx_out):
       op = None
       if ("A"<=line[0].upper()) and (line[0].upper()<="Z"):
          op = asm_op(line)
-      elif number_mode=="m" and is_int(line):
-         # XXX TODO "42a" is 42 + A-mark
-         op = Op(int(line))
-      else:
+      elif number_mode=="m":
+         mark = 0
+         if line[-1] in "abc":
+            mark = 1+("abc".find(line[-1]))
+            line = line[0:-1]
+         if is_int(line):
+            op = Op((int(line) << 2) + mark)
+
+      if op is None:
          raise mkerr("invalid line type [%s]" % line)
 
       assert op is not None
@@ -764,7 +771,8 @@ def asm_asc(asc_in, flx_out):
 
    if entry_address is not None:
       #binary += str2gier("\nexit,0.0.0.%d,<" % entry_address)
-      binary += str2gier("\nexit,%d<" % entry_address)
+      #binary += (str2gier("\nexit,%d<" % entry_address))
+      binary += (bytes([SET_LOWER]) + str2gier("\nexit,%d<" % entry_address))
 
    write_flx(flx_out, binary)
 
