@@ -21,7 +21,7 @@ def load_wav(path, seed=1):
       chunk, bits = bits[0:N], bits[N:]
       words.append(int(chunk,2))
 
-   assert len(words)<950, ("cannot load %s: program too big" % path)
+   assert len(words)<900, ("cannot load %s: program too big" % path)
    return words
 
 if len(sys.argv) != 3:
@@ -36,17 +36,17 @@ words = load_wav(sys.argv[2])
 
 if rate == 12500:
    print("""
-   _b i=41, a3
-   a0:
-      ; pan a1 t+a2
-       pan a1 t+84 ; XXX hack, slip.py doesn't support t+<label> yet
-   a1:
-      arn t+1 IPA
+_b i=41, a3
+a0:
+   ; pan a1 ta2-1
+   pan a1 t+83 ; XXX hack, slip.py doesn't support t+<label> yet
+a1:
+   arn t+1 IPA
    """)
    for i in range(39): print("   tk 0, tk 1")
    print("""
-      hv a1 NPA
-      hv a0
+   hv a1 NPA
+   hv a0
    """)
 
    print("_m")
@@ -59,8 +59,8 @@ elif rate == 25000:
    print("""
    _b i=41, a3
    a0:
-      ; pan a1 t+a2
-       pan a1 t+64 ; XXX hack, slip.py doesn't support t+<label> yet
+      ; pan a1 ta2-1
+       pan a1 t+63 ; XXX hack, slip.py doesn't support t+<label> yet
    a1:
       arn t+1 IPA
    """)
