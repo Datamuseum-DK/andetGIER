@@ -489,26 +489,31 @@ def disasm_flx_binary(path):
       n = (b-a+1)
       return (v>>a) & ((1<<n)-1)
 
-   destination = None
+   pc = None
 
    last_op = None
    while len(xs) > 0:
       x, xs = get_byte(xs)
 
+      ppc = lambda: "[m+%d] " % pc
+
       if x < 64: # binary block
          for i in range(x):
             x, xs = get_int6(xs)
             op = Op(x)
-            print(op.disasm())
+            print(ppc() + op.disasm())
+            pc += 1
             last_op = op
       elif x == 64: # repeat
          x, xs = get_int3(xs)
          assert last_op is not None
          for i in range(x):
-            print(last_op.disasm() + " ; (repeat %d)" % i)
+            print(ppc() + last_op.disasm() + " ; (repeat %d)" % i)
+            pc += 1
       elif x == 65: # destination
          destination, xs = get_int3(xs)
-         print("i=%d ; dest=%d" % (destination//1024*40 + destination%1024, destination))
+         pc = destination//1024*40 + destination%1024
+         print("i=%d ; dest=%d" % (pc, destination))
       elif x == 66: #end
          chk, xs = get_int3(xs)
          print("; end chksum", chk//1024, chk%1024)
@@ -682,8 +687,8 @@ def asm_asc(asc_in, flx_out):
          op = asm_op(line)
       elif number_mode=="m":
          mark = 0
-         if line[-1] in "abc":
-            mark = 1+("abc".find(line[-1]))
+         if line[-1] in "bac":
+            mark = 1+("bac".find(line[-1]))
             line = line[0:-1]
          if is_int(line):
             op = Op((int(line) << 2) + mark)

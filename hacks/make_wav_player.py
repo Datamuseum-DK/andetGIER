@@ -13,7 +13,7 @@ def load_wav(path, seed=1):
          f = struct.unpack("h", b)[0] / 37678.0
          rf = (f*f)**.5
          rms += (rf-rms)*.001
-         f += (random.random() - .5) * rms # dithering
+         f += (random.random() - .5) * 2 * rms # dithering
          bits += "01"[f>.1]
    N=40
    words = []
@@ -21,61 +21,135 @@ def load_wav(path, seed=1):
       chunk, bits = bits[0:N], bits[N:]
       words.append(int(chunk,2))
 
-   assert len(words)<900, ("cannot load %s: program too big" % path)
    return words
 
-if len(sys.argv) != 3:
-   sys.stderr.write("Usage: %s <sample rate: 12500 or 25000> <pcm.wav> > pcm.asc\n" % sys.argv[0])
+if len(sys.argv) != 4:
+   sys.stderr.write("Usage: %s <sample rate: 6250, 12500 or 25000> <pcm.wav> <output.asc>\n" % sys.argv[0])
    sys.stderr.write(".wav file must be mono and 16-bit\n")
    sys.exit(1)
 
-
 rate = int(sys.argv[1])
 
-words = load_wav(sys.argv[2])
+prg = ""
 
-if rate == 12500:
-   print("""
-_b i=41, a3
-a0:
-   ; pan a1 ta2-1
-   pan a1 t+83 ; XXX hack, slip.py doesn't support t+<label> yet
-a1:
-   arn t+1 IPA
-   """)
-   for i in range(39): print("   tk 0, tk 1")
-   print("""
-   hv a1 NPA
-   hv a0
-   """)
+def writeline(str):
+   global prg
+   prg += (str + "\n")
 
-   print("_m")
-   print("a2:")
-   for i,w in enumerate(words):
-      print(str(w) + ["","a"][i == len(words)-1])
-   print("_e41")
+pcm_words = load_wav(sys.argv[2])
 
+pc0 = 41
+pc = pc0
+
+writeline("_b i=%PC0, a6")
+writeline("a0:")
+writeline("   pan a1 t+%TBL0")
+writeline("a1:")
+writeline("   arn t+1 IRA")
+writeline("   ga a2")
+writeline("   tk 10 , ga a4")
+
+writeline("a2:")
+writeline("   arn t+1 IQA")
+pc += 5
+
+irate=None
+if rate == 6250:
+   irate = 4
+   for i in range(39):
+      writeline("   tk 0, tk 0")
+      writeline("   tk 0, tk 1")
+      pc += 2
+   writeline("   tk 0, tk 0")
+   pc += 1
+elif rate == 12500:
+   irate = 2
+   for i in range(39):
+      writeline("   tk 0, tk 1")
+      pc += 1
 elif rate == 25000:
-   print("""
-   _b i=41, a3
-   a0:
-      ; pan a1 ta2-1
-       pan a1 t+63 ; XXX hack, slip.py doesn't support t+<label> yet
-   a1:
-      arn t+1 IPA
-   """)
-   for i in range(38//2): print("   tk 1, tk 1")
-   print("""
-      tk 1
-      hv a1 NPA
-      hv a0
-   """)
-
-   print("_m")
-   print("a2:")
-   for i,w in enumerate(words):
-      print(str(w) + ["","a"][i == len(words)-1])
-   print("_e41")
-
+   irate = 1
+   for i in range(38//2):
+      writeline("   tk 1, tk 1")
+      pc += 1
+   writeline("   tk 1")
+   pc += 1
 else:
    raise RuntimeError("unsupported sample rate %d" % rate)
+
+writeline("   hv a2 NQA")
+pc += 1
+
+writeline("a3:")
+num_wait_samples = 80
+for i in range(num_wait_samples//2):
+   writeline("   tk 0, tk 0")
+   pc += 1
+
+writeline("a4:")
+writeline("   bt t-1")
+writeline("   hv a3")
+writeline("   hv a1 NRA")
+writeline("   hv a0")
+pc += 4
+
+writeline("a5:")
+writeline("_m")
+
+prg = prg.replace("%PC0", str(pc0))
+prg = prg.replace("%TBL0", str(pc-1))
+
+# move leading zeros to end, so we can have [pcm,wait],[pcm,wait]...
+num_leading_zeros = 0
+for w in pcm_words:
+   if w != 0:
+      break
+   num_leading_zeros += 1
+if num_leading_zeros > 0:
+   pcm_words = pcm_words[num_leading_zeros:] + ([0]*num_leading_zeros)
+
+zc = 0
+zthres = 2
+pcms = [[[],0]]
+for i,w in enumerate(pcm_words):
+   if w > 0:
+      if zc >= zthres:
+         pcms.append([[],0])
+      zc = 0
+   else:
+      zc += 1
+      if zc >= zthres:
+         pcms[-1][1] = zc
+   pcms[-1][0].append(w)
+
+# remove trailing zeroes per chunk
+for p in pcms:
+   if p[1] > 0: p[0] = p[0][0:-p[1]]
+
+writeline("")
+writeline("; pcm ptr / wait table")
+cursor = pc + len(pcms)
+for i,p in enumerate(pcms):
+   is_last = (i==len(pcms)-1)
+   num_pcm = len(p[0])
+   num_zero = p[1]
+   if num_zero < 1: num_zero = 1
+   num_wait = round((num_zero * 40) / num_wait_samples)*irate
+   if num_wait < 1: num_wait = 1
+   assert (cursor < 1024)
+   assert (num_wait < 1024)
+   enc = ((cursor-1) << 30) + (num_wait << 20)
+   cursor += num_pcm
+   writeline("%d%s" % (enc, ["","a"][is_last]))
+
+writeline("")
+writeline("; pcm tables")
+for p in pcms:
+   for i,w in enumerate(p[0]):
+      is_last = (i==len(p[0])-1)
+      writeline("%d%s" % (w, ["","a"][is_last]))
+
+writeline("_e%d" % pc0)
+
+with open(sys.argv[3], "w") as f:
+   f.write(prg)
