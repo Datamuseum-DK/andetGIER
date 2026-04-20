@@ -1,20 +1,39 @@
 import sys, wave, struct, random
 
-def load_wav(path, seed=1):
-   random.seed(seed)
-   bits = ""
+def load_wav(path):
+   samples = []
    with wave.open(path, "rb") as w:
       assert w.getnchannels() == 1
       assert w.getsampwidth() == 2
-      rms = 0
       while True:
          b = w.readframes(1)
          if len(b)==0: break
-         f = struct.unpack("h", b)[0] / 37678.0
-         rf = (f*f)**.5
-         rms += (rf-rms)*.001
-         f += (random.random() - .5) * 2 * rms # dithering
-         bits += "01"[f>.1]
+         f = struct.unpack("h", b)[0] / 32768.0
+         samples.append(f)
+   return samples
+
+def load_wav_words(path, dither_path=None, seed=1):
+
+   dither = None
+   if dither_path is not None:
+      dither = load_wav(dither_path)
+
+   audio = load_wav(path)
+
+   random.seed(seed)
+   bits = ""
+   rms = 0
+   for i,f in enumerate(audio):
+      rf = (f*f)**.5
+      rms += (rf-rms)*.001
+      noise = 0
+      if dither is not None:
+         noise = dither[i % len(dither)]
+      else:
+         noise = (random.random() - .5) * 2
+      f += noise * rms # dither hack
+      bias = .1
+      bits += "01"[f>bias]
    N=40
    words = []
    while len(bits)>N:
@@ -23,8 +42,8 @@ def load_wav(path, seed=1):
 
    return words
 
-if len(sys.argv) != 4:
-   sys.stderr.write("Usage: %s <sample rate: 6250, 12500 or 25000> <pcm.wav> <output.asc>\n" % sys.argv[0])
+if len(sys.argv) not in [4,5]:
+   sys.stderr.write("Usage: %s <sample rate: 6250, 12500 or 25000> <pcm.wav> <output.asc> [dither.wav]\n" % sys.argv[0])
    sys.stderr.write(".wav file must be mono and 16-bit\n")
    sys.exit(1)
 
@@ -36,7 +55,9 @@ def writeline(str):
    global prg
    prg += (str + "\n")
 
-pcm_words = load_wav(sys.argv[2])
+dither_path = None
+if len(sys.argv)==5: dither_path = sys.argv[4]
+pcm_words = load_wav_words(sys.argv[2], dither_path)
 
 pc0 = 41
 pc = pc0
