@@ -281,7 +281,7 @@ def writeline(str):
    global prg
    prg += (str + "\n")
 
-pcm_words, original_sample_rate = load_wav_words(args.WAVE, args.dither[0])
+pcm_words, original_sample_rate = load_wav_words(args.WAVE, args.dither and args.dither[0] or None)
 rate = None
 if args.rate_id is not None:
    assert args.sample_rate is None, "cannot specify both sample rate and rate id"
