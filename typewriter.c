@@ -8,7 +8,9 @@ static const int64_t STATE0_DELAY0    = 5000000; // 5ms
 static const int64_t STATE0_DELAY1    = 60000000; // 60ms
 
 // how long to keep ready high
-static const int64_t STATE1_DURATION = 10000000; // 10ms
+static const int64_t STATE1_DURATION0 = 20000000; // 20ms
+static const int64_t STATE1_DURATION1 = 20000000; // 20ms
+// XXX setting these to 10ms seems to be too fast
 
 // pin config
 // (PIN_Outputs[] are outputs from GIER to us, so they're inputs from our
@@ -628,6 +630,11 @@ static void gier_gpio_setup(void)
 	setup_gpio(PIN_Lamp, INPUT, PUD_UP);
 	setup_gpio(PIN_Ready, OUTPUT, PUD_OFF);
 	for (int i=0; i<bus_size; ++i) setup_gpio(PIN_Inputs[i], OUTPUT, PUD_OFF);
+
+	// clear outputs (can be left in a high state on crashes)
+	output_gpio(PIN_Z0_assist, 0);
+	output_gpio(PIN_Ready, 0);
+	for (int i=0; i<bus_size; ++i) output_gpio(PIN_Inputs[i], 0);
 }
 
 #define RINGBUF_SIZE_LOG2 (24)
@@ -697,7 +704,7 @@ static void* gier_comm_thread(void* usr)
 						output_gpio(PIN_Inputs[i], (value & (1<<i)) ? 1 : 0);
 					}
 					output_gpio(PIN_Ready, 1);
-					timeout1 = now + STATE1_DURATION;
+					timeout1 = now + STATE1_DURATION0;
 					state1 = 1;
 				}
 			}
@@ -706,6 +713,12 @@ static void* gier_comm_thread(void* usr)
 			if (timeout1 && (now > timeout1)) {
 				output_gpio(PIN_Ready, 0);
 				for (int i=0; i<bus_size; ++i) output_gpio(PIN_Inputs[i], 0);
+				timeout1 = now + STATE1_DURATION1;
+				state1 = 2;
+			}
+		} else if (state1 == 2) {
+			assert(timeout1 > 0);
+			if (timeout1 && (now > timeout1)) {
 				timeout1 = 0;
 				state1 = 0;
 			}
@@ -1179,6 +1192,7 @@ static void set_keyboard_mode(enum keyboard_mode mode)
 	keyboard_mode = mode;
 }
 
+#if 0
 static void toggle_keyboard_mode(void)
 {
 	switch (keyboard_mode) {
@@ -1187,6 +1201,7 @@ static void toggle_keyboard_mode(void)
 	default: assert(!"unhandled keyboard mode");
 	}
 }
+#endif
 
 static int enable_gpio = 1;
 static int enable_audio = 1;
@@ -1243,8 +1258,7 @@ static void play(enum sample_id sample_id)
 
 static void play_sound_for_code(int code)
 {
-	//printf("play %d\n", code);
-	assert((0 <= code) && (code <= 64));
+	if (!((0 <= code) && (code <= 64))) return;
 	const int e = code_enum[code];
 
 	if (code == 0) {
@@ -1473,7 +1487,7 @@ static int utf8_to_latin1(const char* str)
 	return -1;
 }
 
-static int decode_asc(int byte, int* out_code, int* out_is_upper)
+static int decode_asc(int byte, int* out_code, int* out_enum)
 {
 	#define X(CODE,_GIDX,ENUM,UTF8,ALT,_SCAN) \
 	{ \
@@ -1481,7 +1495,7 @@ static int decode_asc(int byte, int* out_code, int* out_is_upper)
 		const char* utf8 = UTF8; \
 		if ((byte==utf8_to_latin1(alt)) || byte==utf8_to_latin1(utf8)) { \
 			*out_code = CODE; \
-			*out_is_upper = !!(ENUM & UPPER); \
+			*out_enum = ENUM; \
 			return 1; \
 		} \
 	}
@@ -2000,12 +2014,17 @@ int main(int argc, char** argv)
 									// to the "ALT" column in LIST_OF_CODES.
 									// also takes care of upper/lowercase
 									// "prefixes"
-									int char_is_upper = 0;
 									int giercode = 0;
-									if (decode_asc(b, &giercode, &char_is_upper)) {
-										if (char_is_upper != is_upper) {
-											is_upper = char_is_upper;
-											ringbuf_send(&us2gier_ringbuf, is_upper ? SET_UPPER : SET_LOWER);
+									int gierenum = 0;
+									if (decode_asc(b, &giercode, &gierenum)) {
+										const int only_upper = (gierenum & UPPER) && !(gierenum & LOWER);
+										const int only_lower = (gierenum & LOWER) && !(gierenum & UPPER);
+										if (!is_upper && only_upper) {
+											ringbuf_send(&us2gier_ringbuf, SET_UPPER);
+											is_upper = 1;
+										} else if (is_upper && only_lower) {
+											ringbuf_send(&us2gier_ringbuf, SET_LOWER);
+											is_upper = 0;
 										}
 									}
 									ringbuf_send(&us2gier_ringbuf, giercode);
