@@ -1,9 +1,19 @@
-Skrivemaskineprogrammet følger GIER-skrivemaskinens tastaturlayout, ikke dansk,
-eller hvad operativsystemet er sat op til.
+Skrivemaskineprogrammet starter når Raspberry Pi booter, men kan også startes
+med ikonet på skrivebordet, eller ved at gå til ~/andetGIER og køre
+./typewriter
 
-[PgUp]/[PgDn]/[Home]/[End] scroller teksten op/ned.
+Raspberry Pi'en har WiFi, men det har Tapeten ikke. Det fungerer dog med
+"mobilt hotspot" hvis der skal bruges internet.
+
+Programmet kan opdateres med "Opdater"-ikonet på skrivebordet, men det kan også
+gøres manuelt ved at gå til ~/andetGIER, køre git pull, og ./build-rpi.sh.
+
+Programmet følger GIER-skrivemaskinens tastaturlayout, ikke dansk, eller hvad
+operativsystemet er sat op til.
 
 [Esc] åbner(/lukker) menu.
+
+[PgUp]/[PgDn]/[Home]/[End] scroller teksten op/ned.
 
 Cirkel øverst til højre er "skrivemaskinelampen", styret af GIER:
  - grøn: lampe tændt, GIER er klar til tastetryk
@@ -18,15 +28,14 @@ Menu:
    tegn. Hvis den er slået fra kan du skrive/sende tegn uanset
  - "Ryd tekst": "clear screen", sletter tekst du har modtaget/skrevet (sletter
    også flx/asc buffer)
- - "Gem..." gemmer en .flx og .asc fil af teksten (alt modtaget eller skrevet)
+ - "Gem..." gemmer en .flx og .asc fil af teksten (alt modtaget+skrevet)
  - "Afspil .flx/.asc ...": går til en "fildialog" hvor du kan vælge en .flx
-   eller .asc fil at sende til GIER
+   eller .asc fil at sende til GIER (funktionen kan kun sende med lav
+   hastighed, ~25 tegn i sekundet, og fungerer umiddelbart kun med .asc filer)
 
 
-Miljøvariabler:
-
-NOGPIO=1 - ingen GPIO; programmet er bare en skrivemaskine (brugbart hvis du
-tester på andet end en Raspberry Pi)
-
-NOAUDIO=1 - ingen lyd / device init
-
+Programmet kan også bygges på Linux/BSD platforme generelt, og køres med:
+   $ NOGPIO=1 ./typewriter
+Så er programmet "bare en skrivemaskine" (nyttigt til udvikling+debugging uden
+RPi+GIER). Uden NOGPIO forsøger programmet at mappe GPIO vha.
+mmap("/dev/mem",...)
